@@ -781,7 +781,7 @@ function sqlManageForeignKeysDatas($db, $tableName, $updatePivotTable = false, $
     foreach(sqlGetPivotJoinTables($db) as $pivotJoinTableName)
     {
         //Pour chaque table de jointures devant avoir un tuple par assemblage possible
-        foreach(sqlGetJoinTools($db, $pivotJoinTableName) as $constraintName => $pivotJoinTools)
+        foreach(/*sqlGetJoinTools*/sqlGetJoinList($db, $pivotJoinTableName) as $constraintName => $pivotJoinTools)
         {
             //Ici, la table root est la table de pivot
             $pivotDatasKey = $pivotJoinTools['rootTable']['Name']/* . '-' . $pivotJoinTools['extraTable']['Name']*/;
@@ -2526,13 +2526,13 @@ function sqlJoin($db,   $rootTable,     //Table principale à laquelle on souhai
     $rootPrimaryKey = sqlGetPrimaryKey($db, $rootTable);
     $htmlDatalists = '';
 
-    $renames = [];
+    /*$renames = [];
     foreach($selectArray as $selected) if(isset($selected['Rename']))
     {
         $renames[$selected['Rename']] = $selected['Name'];
-    }
-
-    foreach($joinArray as $key => $joinElement) /*if(isset($joinElement['Table'], $joinElement['rootKey'], $joinElement['showKey']))*/
+    }*/
+    
+    foreach($joinArray as $joinElement) /*if(isset($joinElement['Table'], $joinElement['rootKey'], $joinElement['showKey']))*/
     {
         //Pour chaque table extra
         //Obtenir sa clé primaire, si elle n'est pas spécifiée par l'utilisateur, sinon la récupérer
@@ -2800,14 +2800,78 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
         ?   $joinArray
         :   [];
 
+    $tableAppelation = (bool)$tableRename
+        ?   $tableRename
+        :   $tableName;
+
+    //Pas seulement la table de travail est à joindre, mais aussi les tables qui lui sont en pivot, lesquelles verront leurs showColumns jointes
     $joinsList = sqlGetJoinList($db, $tableName, true, $tableRename);
-    
+    ///*[WIP] -BUG: rend la modification des colonnes affectées impossible
+    foreach(sqlGetPivotJoinTables($db) as $pivotTable)
+    {
+        foreach(sqlGetJoinList($db, $pivotTable) as $join)
+        {
+            if
+            (
+                $pivotJoinedShowKey = array_intersect($join['rootTable']['joinKey'], $join['rootTable']['showKey']) AND
+                in_array(
+                    $tableName,
+                    array_column(
+                        array_column(
+                            sqlGetJoinList($db, $join['rootTable']['Name']),
+                            'extraTable'
+                        ), 
+                        'Name'
+                    )
+                )
+            )
+            {
+                //Pour chaque jointure sur une showColumn sur une table de pivot où la table courante est une des extraTables
+                foreach($selectArray as $select)
+                    if(isset($select['originPivotTable']) AND inString(sqlGetColumnProperty($db, $tableAppelation, $select['Name'], 'Comment'), 'showKey'))//[shit-flag] Quelle originTable ?
+                    {
+                        //Pour chaque élément select provenant d'une table de pivot [shit-flag] On peut mettre une seul show/join column par key
+                        foreach($join['rootTable']['showKey'] as $joinShowColumn)
+                        {
+                            if(in_array($joinShowColumn, $pivotJoinedShowKey) AND $joinShowColumn === $select['originColumn'])
+                            {
+                                //Pour chaque showColumn de rootTable étant jointe à une autre table
+                                var_dump($select);
+                                var_dump($joinShowColumn);
+                                
+                                //Ajout du join créé parmis ceux existants
+                                $newJoin = $join;
+
+                                //Les join/showKey vont changer au nom de ceux qu'on mettra dans la vue
+                                $newJoin['rootTable']['showKey'] = [];
+                                $newJoin['rootTable']['joinKey'] = [];
+
+                                $newJoin['rootTable']['Name'] = $tableAppelation;
+
+                                $newJoin['rootTable']['joinKey'][] = $select['Name'];
+                                $newJoin['rootTable']['showKey'][] = $select['Name'];
+
+                                $joinsList[] = $newJoin;
+                                var_dump($newJoin);
+                            }
+                        }
+                        
+                    }
+            }
+                
+        }
+    }
+    //*/
+    //var_dump($joinsList);
+
+    //Enrichissement du selectArray et du joinArray
     foreach($joinsList as $constraintName => $join)
     {
         //Préparation du selectArray
         $i = 0;
         foreach($join['extraTable']['showKey'] as $extraTableShowColumn)
         {
+            //Pour chaque extraShowColumn de la table
             $selectArray[$constraintName . $i++] =
             [
                 'Database' => $join['Database'],
@@ -2820,6 +2884,7 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
         $i = 0;
         foreach($join['rootTable']['joinKey'] as $rootTablejoinColumn)
         {
+            //Pour chaque colonne de jointure côté root
             //Si une colonne portant le nom qu'on a donné en alias/rename à une colonne de jointure existe déjà, on la jarte
             $alias = isset($join['columnAlias'])
                 ?   $join['columnAlias']
@@ -2828,9 +2893,7 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
                 $key = array_search(
                     [
                         'Database' => $dbName,
-                        'Table' => (bool)$tableRename
-                            ?   $tableRename
-                            :   $tableName,
+                        'Table' => $tableAppelation,
                         'Name' => $alias
                     ],
                     $selectArray
@@ -2839,7 +2902,6 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
             {
                 unset($selectArray[$key]);
             }
-
 
             $selectArray[$constraintName . $i++]['Rename'] = $alias;
         }
@@ -2853,6 +2915,15 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
     return $joinsList;
 }
 
+function sqlGetJoinColumns($db, $tableName)
+{
+    global $dbName;
+    return array_column(
+        sqlSelect($db, "SELECT DISTINCT `information_schema`.`KEY_COLUMN_USAGE`.`COLUMN_NAME` FROM `information_schema`.`KEY_COLUMN_USAGE` WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?", [$dbName, $tableName]),
+        'COLUMN_NAME'
+    );
+}
+
 function sqlPivot(
     $db,  
     $originalTableName, //Nom de la table racine qui va être copiée pour l'affichage final
@@ -2860,7 +2931,7 @@ function sqlPivot(
     $pivotData,    //Donnée de pivot
     &$columnsAttributes,
     &$selectArray,
-    $addedAfterKey   //Après cette clé s'ajouteront les nouvelles colonnes
+    $addedAfterColumn   //Après cette colonne s'ajouteront les nouvelles colonnes
 )
 {
     global $dbName;
@@ -2900,8 +2971,23 @@ function sqlPivot(
                 foreach($pivotData['pivotShowKey'] as $joinShowColumn)
                 {
                     //Pour chaque donnée de la jointure considérée comme nouvelle colonne
-                    $newColumnName = "$addedKeysMiscs[$joinShowColumn]" . implode(',', array_return($extraTuple, array_column(sqlGetShowKey($db, $pivotData['extraTable']['Name']), 'Name')));
-
+                    $showColumnsNames = 
+                        array_column(
+                            sqlGetShowKey(
+                                $db,
+                                $pivotData['extraTable']['Name']),
+                                'Name'
+                            );
+                    $showColumnsValues = 
+                        implode(
+                            ',', 
+                            array_return(
+                                $extraTuple,
+                                $showColumnsNames
+                            )
+                        );
+                    $newColumnName = "$addedKeysMiscs[$joinShowColumn]$showColumnsValues";
+                    
                     //La nouvelle colonne prend ses attributs
                     $columnsAttributes[$newColumnName] = 
                         isset($columnsAttributes[$newColumnName])
@@ -2926,6 +3012,8 @@ function sqlPivot(
                     [
                         'Database' => $dbName,
                         'Table' => $tempTableName,
+                        'originPivotTable' => $pivotData['extraTable']['Name'],
+                        'originColumn' => $joinShowColumn,
                         'Name' => $newColumnName
                     ];
 
@@ -2938,7 +3026,19 @@ function sqlPivot(
                     }
                     
                     //Ajout dans la table temporaire
-                    sqlAlter($db, $tempTableName, $newColumnName, 'ADD', $joinShowColumnTypes[$joinShowColumn]['Type'], $joinShowColumnTypes[$joinShowColumn]['Size'], $addedAfterKey);
+                    sqlAlter(
+                        $db,
+                        $tempTableName,
+                        $newColumnName,
+                        'ADD',
+                        $joinShowColumnTypes[$joinShowColumn]['Type'],
+                        $joinShowColumnTypes[$joinShowColumn]['Size'],
+                        $addedAfterColumn,
+                        in_array($joinShowColumn, $pivotData['pivotShowKey'])
+                            ?   sqlGetColumnProperty($db, $pivotData['pivotTable']['Name'], $joinShowColumn, 'Comment')
+                            :   NULL
+                    );
+
                     $addedColumnsGroup[$joinShowColumn] = 
                         array_merge(
                             $addedColumnsGroup[$joinShowColumn], 
@@ -3438,14 +3538,7 @@ function getRelationnalTable(
 )
 {
     global $dbName, $tableConfigTableName, $columnsConfigTableName, $usersTableName, $showKeyColumnName, $idString, $contentString;
-    $pivotJoinTables = 
-        array_intersect(
-            sqlGetPivotJoinTables($db), 
-            array_column(
-                sqlSelect($db, "SELECT TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_NAME = '$originTable'", NULL, 'drop'), 
-                'TABLE_NAME')
-        );
-        
+    
     //Obtention de la clé primaire de la table
     $tablePrimaryKey = sqlGetPrimaryKey($db, $originTable);
 
@@ -3467,25 +3560,25 @@ function getRelationnalTable(
     if($returnType === 'htmlTable')
     {
         $columnsAttributes = 
-        array_replace_recursive(
-            $columnsAttributes, 
-            sqlManageForeignKeysDatas($db, 
-                $originTable, 
-                false, 
-                $userGrants, 
+            array_replace_recursive(
                 $columnsAttributes, 
-                $pivotPrimaryValues, 
-                $selectArray,
-                $pivotsShowKeyJoinings,
-                $workTable
-            )
-        );
-        
-        //Jointures directes, potentiellement plusieurs fois à la même table extra
+                sqlManageForeignKeysDatas($db, 
+                    $originTable, 
+                    false, 
+                    $userGrants, 
+                    $columnsAttributes, 
+                    $pivotPrimaryValues, 
+                    $selectArray,
+                    $pivotsShowKeyJoinings,
+                    $workTable
+                )
+            );
+            
+        //Les tables de pivot et la table visée vont toutes les deux subire des jointures directes afin d'afficher les bons noms de colonnes/valeurs
         sqlGetJoinTools($db, $originTable, $selectArray, $joinArray, $workTable);
         
         sqlJoin($db, $originTable, $joinArray, $columnsAttributes, $selectArray, $htmlDatalists, $workTable, $userGrants/*, $datalistQuery*/);
-
+        
         //var_dump($originTable, $returnType, '$selectArray', $selectArray, '$columnsAttributes', $columnsAttributes);
         
         $hiddenColumnsNames = sqlGetTableHiddenColumns($db, $originTable);
@@ -3522,7 +3615,7 @@ function getRelationnalTable(
         'LEFT JOIN' => $joinArray,
         'WHERE' => globalToArray($directQueryGlobal, 'WHERE', $workTable, $execute, $selectArray, $columnsAttributes, $joinArray),
         'ORDER BY' => globalToArray($directQueryGlobal, 'ORDER BY', $workTable)
-    ], $execute, 'drop', ['SELECT', 'WHERE'], false);
+    ], $execute, 'drop', ['SELECT', 'WHERE'], true);
     
     if($returnType === 'htmlDatalist')
     {
