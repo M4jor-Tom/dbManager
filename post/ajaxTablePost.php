@@ -1,4 +1,4 @@
-<?php //var_dump($_POST);
+<?php var_dump($_POST);
 if(
     isset($_POST['edittable'], $_POST['primarykey'], $_POST['primaryvalue'], $_POST['editkey'], $_POST['value']) AND 
     !(
@@ -14,7 +14,7 @@ if(
         $dbTables = sqlGetTables($db);
         $editTable = securedContentPick($dbTables, $_POST['edittable']);
         $securedPrimaryKey = [];
-
+        
         if(sqlIntable($db, $editTable, explode(',', $_POST['primarykey'])) AND 
            sqlIntable($db, $editTable, $_POST['editkey']))
         {
@@ -71,16 +71,16 @@ if(
 
     $primaryValues = explode(',', $_POST['primaryvalue']);
 
-    if(!isset($sqlInjectionAttempt, $editTable, $securedPrimaryKey, $editKey, $editValue))
+    if(!isset($sqlInjectionAttempt))
     {
         //var_dump($db, $editTable, $securedPrimaryKey, $primaryValues, $editKey, $editValue);
         sqlUpdate($db, $editTable, $securedPrimaryKey, $primaryValues, $editKey, $editValue);
         //         db   table       condition_colonnes  condition_valeurs      clé_modif valeur_modif
     }
-    else 
+    else
     {
         //Attaque
-
+        
     }
 }
 else
