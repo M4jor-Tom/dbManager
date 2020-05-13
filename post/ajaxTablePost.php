@@ -1,4 +1,4 @@
-<?php var_dump($_POST);
+<?php //var_dump($_POST);
 if(
     isset($_POST['edittable'], $_POST['primarykey'], $_POST['primaryvalue'], $_POST['editkey'], $_POST['value']) AND 
     !(
