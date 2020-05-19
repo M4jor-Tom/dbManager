@@ -18,7 +18,7 @@ if(sessionCheck($dbLogger, $dbManager) AND !isset($_GET['disconnect']))
     $pwd = parse_ini_file($pathToProperties)[2];
     $mysqlCreds = sqlGetMysqlUserInfo($dbLogger, $_SESSION[$tokenKey], $pwd);
     $db = sqlConnect($host, $dbName, $mysqlCreds['User'], $pwd/*, 'silent'*/);
-    
+    //var_dump(sqlGetJoinList($db, $_GET['selectedtable'], true, '', [], true));
     //Aquisition des php dont on à besoin pour que tout fonctionne (sauf query.php qui affiche du json pour répondre)
     if($_POST)
     {

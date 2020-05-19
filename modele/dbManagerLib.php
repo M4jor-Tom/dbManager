@@ -22,7 +22,7 @@ foreach($utilisateurs as $user)
     $startTime = microtime(true);
     $nextTimeUseDisconnect = 0;
 
-    $rootPwd = parse_ini_file($pathToProperties)[3];
+    $rootPwd = parse_ini_file($pathToProperties)[4];
 
     try
     {
@@ -731,7 +731,13 @@ function sqlDbManageConfig($db)
         foreach($tableColumnsNames as $tableColumnName) if(!sqlDataExists($db, $columnsConfigTableName, ['ID_table', $showKeyColumnName], [$ID_table, $tableColumnName]))
         {
             //Pour chaque colonne de la table non répertoriée dans la table de config des colonnes
-            if(array_intersect((array)sqlGetShowKey($db, $tableColumnsNames), (array)sqlGetColumnsProperties($db, $tableColumnsNames, $tableColumnName, ['Field'])))
+            if
+            (
+                array_intersect(
+                    (array)sqlGetShowKey($db, $tableColumnsNames), 
+                    (array)sqlGetColumnsProperties($db, $tableColumnName, ['Field'])
+                )
+            )
             {
                 //Si la colonne à insérer fait partie de la clé primaire de la table
                 $hidden = 1;
@@ -762,14 +768,6 @@ function sqlDbManageConfig($db)
 
     return array_combine($configuratedTablesNames, $configuratedTables);
 }
-
-/*function sqlManageInterForeignKeysDatas($db, $table)
-{
-    foreach(sqlGetJoinTables($db, 'inter', $table) as $interJoinTable)
-    {
-
-    }
-}*/
 
 function sqlManagePivotForeignKeysDatas($db, $tableName, $updatePivotTable = false, $userGrants = [], $columnsAttributes = [], &$pivotPrimaryValues = [], &$selectArray = [], &$showKeyJoinings = [], $tableRename = '')
 {
@@ -871,7 +869,7 @@ function sqlManagePivotForeignKeysDatas($db, $tableName, $updatePivotTable = fal
     foreach(sqlGetTables($db) as $table)
     {
         //Pour chaqune des trois table (root, join, extra), récupération des valeurs primaires
-        $tablePrimaryValues[$table] = sqlSelect($db,
+        $result = sqlSelect($db,
         [
             'SELECT' => 
             [
@@ -898,7 +896,10 @@ function sqlManagePivotForeignKeysDatas($db, $tableName, $updatePivotTable = fal
                     'Value' => $table
                 ]
             ]
-        ])[0]['ID_table'];
+        ]);
+        $tablePrimaryValues[$table] = isset($result[0]['ID_table'])
+            ?   $result[0]['ID_table']
+            :   [];
     }
     
     foreach($pivotDatas as $pivotData)
@@ -1248,9 +1249,12 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
                     }
                     break;
     
-                case 'GROUP BY':
                 case 'ORDER BY':
                     $mean = $elementProperties['Mean'] === 'ASC' ? 'ASC' : 'DESC';
+                case 'GROUP BY':
+                    $mean = $clauseType === 'ORDER BY'
+                        ?   $mean
+                        :   '';
                     $result .= ($firstLoop ? $keyWord : ', ') . "$columnId $mean";
                     break;
 
@@ -2457,7 +2461,7 @@ function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable
     }
 
 
-    $possibleTables = 
+    $possibleTables =
         array_column(
             sqlSelect(
                 $db, 
@@ -2470,7 +2474,6 @@ function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable
             ), 
             $showKeyColumnName
         );
-
     $return = $possibleTables;
     if($relatedTableName != '')
         foreach($possibleTables as $possibleTable)
@@ -2537,7 +2540,7 @@ function sqlGetExtraTablesAndJoinKeys($db, $table)
 function sqlGetSupposedJoins($db)
 {
     //Récupération des tables de joinutre de la base de données
-    $supposedJoins = [];
+    $combinations = $supposedJoins = [];
     $joinTables = sqlGetJoinTables($db, 'pivot');
     foreach($joinTables as $table)
     {
@@ -2835,7 +2838,6 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
                 'Mean' => 'ASC'
             ]
         ]
-
     ], NULL, 'drop', ['SELECT DISTINCT', 'LEFT JOIN']);
 
     //Pour chaque (sous)donnée de jointure (une même contrainte va réapparaitre autant de fois qu'elle est en condition de join)
@@ -2877,8 +2879,29 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
                 $returnFilters['Key']
             )
         :   $joinDatas;
-
+        
     return $return;
+}
+
+//A partir du nom de la table et des informations de configuration de la base de données,
+//Cette fonction va ajouter des select correspondants aux nombres de jointures existants
+//dans les tables d'interJoin qu'elle trouvera
+//[ATTENTION] Pour utiliser cette fonction, un GROUP BY rootTable.primaryKey est obligatoire
+function sqlGetInterJoinSelects($db, $rootTableName)
+{
+    if($joinTables = sqlGetJoinTables($db, 'inter', $rootTableName))
+    {
+        $countDistinctSelects = [];
+        var_dump($joinTables);
+        foreach($joinTables as $nIndex => $joinTable)
+        {
+            //Pour chaque interJoin
+    
+        }
+    
+        return $countDistinctSelects;
+    }
+    else return [];
 }
 
 function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], $tableRename = '')
@@ -3004,6 +3027,8 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
         $joinArray[$constraintName]['extraTable']['Rename'] = 'tempjoin_' . $constraintName;
     }
 
+    $interJoinSelects = sqlGetInterJoinSelects($db, $tableName);
+
     //$selectArray sorting
     //ksort($selectArray);
     foreach($selectArray as $key => $select)
@@ -3035,6 +3060,7 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
         array_merge(
             $joinSelectArray,
             $mainSelectArray,
+            $interJoinSelects,
             $joinedPivotSelectArray,
             $elseSelectArray
         );
@@ -3656,11 +3682,11 @@ function sqlGetTableHiddenColumns($db, $tableName)
 }
 
 function getRelationnalTable(
-    $db, 
-    $originTable, 
-    $userGrants, 
+    $db,
+    $originTable,
+    $userGrants,
     $directQueryGlobal = NULL,
-    $indexUrl = 'index.php', 
+    $indexUrl = 'index.php',
     $returnType = 'htmlTable',
     &$keys = []
 )
@@ -3710,13 +3736,6 @@ function getRelationnalTable(
         //var_dump($originTable, $returnType, '$selectArray', $selectArray, '$columnsAttributes', $columnsAttributes);
         
         $hiddenColumnsNames = sqlGetTableHiddenColumns($db, $originTable);
-
-        $interJoinTablesRootJoinKeys = [];
-        foreach(sqlGetJoinTables($db, 'inter', $originTable, 'rootTable', ['Name', 'joinKey']) as $constraintName => $join)
-        {
-            //var_dump($constraintName, $join);
-            //$interJoinTablesRootJoinKeys[$constraintName] = $join['rootTable']['joinKey'];
-        }
     }
     elseif($returnType === 'htmlDatalist')
     {
@@ -3736,7 +3755,7 @@ function getRelationnalTable(
             ]
         );
     }
-
+    
     $primaryColumns = [];
     foreach(sqlGetPrimaryKey($db, $workTable, true) as $primaryColumn)
     {
@@ -3744,8 +3763,7 @@ function getRelationnalTable(
         [
             'Database' => $dbName,
             'Table' => $workTable,
-            'Name' => $primaryColumn,
-            'Mean' => 'ASC'
+            'Name' => $primaryColumn
         ];
     }
     
@@ -3761,16 +3779,9 @@ function getRelationnalTable(
         ],
         'LEFT JOIN' => $joinArray,
         'WHERE' => globalToArray($directQueryGlobal, 'WHERE', $workTable, $execute, $selectArray, $columnsAttributes, $joinArray),
-        'ORDER BY' => globalToArray($directQueryGlobal, 'ORDER BY', $workTable)/*,
-        'GROUP BY' => $primaryColumns*/
+        'GROUP BY' => $primaryColumns,
+        'ORDER BY' => globalToArray($directQueryGlobal, 'ORDER BY', $workTable)
     ], $execute, 'drop', ['SELECT', 'WHERE'], false);
-
-    if($returnType === 'htmlTable')
-        foreach($datas as $nIndex => $tuple)
-            foreach($interJoinTablesRootJoinKeys as $constraintName => $join)
-            {
-                var_dump($constraintName, $join);
-            }
     
     if($returnType === 'htmlDatalist')
     {
@@ -3790,40 +3801,41 @@ function getRelationnalTable(
             :   NULL;
         
         $renames = [];
-        if(isset($datas[0]))
+        foreach($showKeyArray as $nIndex => $showColumn)
         {
-            foreach($showKeyArray as $nIndex => $showColumn)
-            {
-                $showKeyArray[$nIndex] = ucwords($showColumn);
-            }
-            
-            $htmlTable = htmlTable(
-                $datas,
-                $selectArray,
-                $joinArray,
-                $tablePrimaryKey,
-                array_merge(
-                    array_fill_keys($hiddenColumnsNames, ''),
-                    $renames
-                ),
-                ['td' => 'class = \'dynamic-td\''],    //$tableElementsEditionRequested
-                $columnsAttributes,   //columnsAttributes
-                $cellMisc,   //$cellMisc
-                $indexUrl,
-                $indexUrlWithGets,
-                $originTable,
-                NULL,
-                $showKeyArray,
-                $pivotPrimaryValues,
-                in_array('DELETE', $userGrants["$dbName.$originTable"]['tableswide permissions'][$originTable]),
-                $keys
-            );//var_dump($selectArray);
-            $return = htmlFilterBox($_GET, $keys, $indexUrl, $selectArray) . $htmlTable;
+            $showKeyArray[$nIndex] = ucwords($showColumn);
         }
-        else
-        {
-            $return = '<h4 class = empty-results>No results</h4>';
-        }
+        
+        $htmlTable = htmlTable(
+            $datas,
+            $selectArray,
+            $joinArray,
+            $tablePrimaryKey,
+            array_merge(
+                array_fill_keys($hiddenColumnsNames, ''),
+                $renames
+            ),
+            ['td' => 'class = \'dynamic-td\''],    //$tableElementsEditionRequested
+            $columnsAttributes,   //columnsAttributes
+            $cellMisc,   //$cellMisc
+            $indexUrl,
+            $indexUrlWithGets,
+            $originTable,
+            NULL,
+            $showKeyArray,
+            $pivotPrimaryValues,
+            in_array('DELETE', $userGrants["$dbName.$originTable"]['tableswide permissions'][$originTable])
+        );
+                    
+        $joinTables = sqlGetJoinList($db, $originTable);
+        $lists = [];
+        foreach($joinTables as $constraintName => $join)
+            $lists[$constraintName] = $join['extraTable']['Name'];
+        
+        $return = 
+            htmlFilterBox($_GET, array_keys($columnsAttributes), $indexUrl, $selectArray) . 
+            $htmlTable .
+            htmlCreateInputs($db, $originTable, array_keys($columnsAttributes), $userGrants, $indexUrl . rebuildGetString());
     }
 
     //Affichage html
@@ -3854,8 +3866,7 @@ function htmlTable(
     $tableTitle = NULL, //Titre du tableau
     $titlingShowKey = NULL,   //Champ qui sera recopié en propriété html 'title' de chaque ligne
     $primaryValuesGroups = NULL,  //array rassemblant les valeurs primaires des occurences dans le même ordre que $datas
-    $deleteButton = false,
-    &$columnsList = []
+    $deleteButton = false
 )
 {
     global $idString;   //Chaîne de charactères remplacée par la clé primaire d'une donnée 'string'
@@ -3901,6 +3912,7 @@ function htmlTable(
 
     //Création du contenu html
     $html = "<table $tableElementsEdition[table]>";
+    
     foreach($datas as $index => $tuple)
     {
         //Pour chaque ligne
@@ -3933,7 +3945,7 @@ function htmlTable(
                         //Aucun changement
                         $columnRename = $column;
                     }
-                    $columnsList[] = $column/*columnRename*/;
+                    //$columnsList[] = $column/*columnRename*/;
                     
                     if(!isset($replaceColumns[$column]) OR $replaceColumns[$column] != '')
                     {
@@ -4096,11 +4108,13 @@ function htmlTable(
     return $html;
 }
 
-function htmlDatalist($datas,   
-                        $attributes = NULL, //Les clés présentes dans la table sql que l'on veut afficher dans le datalist html array(string, ...)
-                        $showKey = NULL,    //clé à afficher (string)
-                        $generalAttributes = NULL,  //Attributs pour chaque colonnes (html) [string(htmlTag) => string(htmlAttributes], ...)
-                        $currentDatalistString = NULL)  //Si l'on veut checker que le htmlDataList n'existe pas
+function htmlDatalist(
+    $datas,   
+    $attributes = NULL, //Les clés présentes dans la table sql que l'on veut afficher dans le datalist html array(string, ...)
+    $showKey = NULL,    //clé à afficher (string)
+    $generalAttributes = NULL,  //Attributs pour chaque colonnes (html) [string(htmlTag) => string(htmlAttributes], ...)
+    $currentDatalistString = NULL   //Si l'on veut checker que le htmlDataList n'existe pas
+)
 {
     global $showKeyColumnName;
     $html = '';
@@ -4171,6 +4185,59 @@ function htmlDatalist($datas,
     {
         return $html;
     }
+}
+
+function htmlCreateInputs($db, $tableName, $listsInfo, $userGrants, $indexUrlWithGets)
+{
+    global $dbName;
+
+    //Récupérer chaque colonne de la table et dire si l'on peut créer une occurence sans initialiser chaque colonne
+    $selectedTableColumns = [];
+    $columnsInitialisationInputs = '<div id = \'preset-create-inputs\'>';
+    $hiddenColumnsNames = sqlGetTableHiddenColumns($db, $tableName);
+    foreach(array_cross(sqlGetColumnsProperties($db, $tableName, ['Field', 'Default'])) as $nIndex => $column)
+        if(!in_array($column['Field'], $hiddenColumnsNames))
+    {
+        $class = $required = '';
+        if($column['Default'] === NULL)
+        {
+            //S'il n'y a pas de valeur par défaut (colonne NULL ou aucune AUCUNE)
+            try
+            {
+                //La colonne est NULL
+                sqlQuery($db, "SELECT DEFAULT($column[Field]) FROM $tableName");
+                $selectedTableColumns[$column['Field']] = false;
+            }
+            catch(Exception $e)
+            {
+                //Cette colonne DOIT être initialisée à la création
+                $selectedTableColumns[$column['Field']] = true;
+                $required = ' required';
+                $class = ' class = \'required\'';
+            }
+        }
+        else
+        {
+            //Cette colonne à une valeur par défaut
+            $selectedTableColumns[$column['Field']] = false;
+        }
+        $list = isset($lists[$column['Field']])
+            ?   ' list = \'' . $lists[$column['Field']] . '\''
+            :   '';
+        $columnsInitialisationInputs .= "<input$list type = 'text' name = 'field-$column[Field]' placeholder = '$column[Field]'$class$required>";
+    }
+    $columnsInitialisationInputs .= '</div>';
+
+    //On n'affiche le formulaire de création que si l'on a le droit de créer des occurences
+    $createForm = in_array('INSERT', $userGrants["$dbName.$tableName"]['tableswide permissions'][$tableName])
+        ?   "<form action = '$indexUrlWithGets' method = 'POST'>
+        <input type = 'hidden' name = 'table' value = '$tableName'>
+        $columnsInitialisationInputs
+        <button id = create-button type = 'submit' name = 'queryType' value = 'insert' >Create</button>
+    </form>"
+        :   '';
+
+    return $createForm;
 }
 
 function htmlMenu($datas,   $hrefMask = NULL,  //href avec la partie variable en fonction de l'occurence remplacée par $contentString
@@ -4634,7 +4701,7 @@ function appendFiles($filesPaths, $attributes = NULL, $clicky = NULL, $hrefMask 
 
 //INITIAL ACTIONS
 
-$sudo['mysql'] = sqlConnect('localhost', 'mysql', 'root', parse_ini_file($pathToProperties)[3]);
+$sudo['mysql'] = sqlConnect('localhost', 'mysql', 'root', parse_ini_file($pathToProperties)[4]);
 $dbLogger = sqlConnect($host, $dbName, 'dbLogger', parse_ini_file($pathToProperties)[2]);
 $dbManager = sqlConnect($host, $dbName, 'dbManager', parse_ini_file($pathToProperties)[3]);
 

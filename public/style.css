@@ -1,0 +1,292 @@
+html
+{
+    font-family: arial;
+}
+a
+{
+    text-decoration: none;
+    color: blue;
+}
+.clicky:hover
+{
+    cursor: pointer;
+}
+.empty-results
+{
+    text-align: center;
+}
+
+/*  GRAPH   */
+
+.chart-container
+{
+    margin: auto;
+    width: 50%;
+}
+
+/*  TABLES  */
+
+table
+{
+    min-width: 100%;
+    border-collapse: collapse;
+    overflow: auto;
+}
+
+thead
+{
+    border-bottom: 2px solid black;
+}
+
+th, td
+{
+    border-right: 1px solid grey;
+    border-left: 1px solid grey;
+    border-top: 0;
+    border-bottom: 0;
+    padding: 0;
+    width: 30px;
+    max-width: auto;
+    text-align: center;
+}
+
+th
+{
+    background-color: lightgrey;
+    padding: 0;
+}
+
+td:nth-child(even), th:nth-child(even)
+{
+    background-color: rgba(138, 179, 212, 0.349);
+}
+
+td:nth-child(odd), th:nth-child(odd)
+{
+    background-color: rgba(0, 140, 255, 0.349);
+}
+
+tr
+{
+    border-top: 1px solid grey;
+    border-bottom: 1px solid grey;
+}
+
+tr:nth-child(even)
+{
+    background-color: rgb(211, 243, 96);
+}
+
+tr:nth-child(odd)
+{
+    background-color: rgb(111, 223, 46);
+}
+
+td > input.dynamic-input
+{
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background-color: rgb(195, 191, 255);
+    text-align: center;
+}
+
+td > form > button
+{
+    width: 100%;
+    height: 100%;
+}
+
+td, td > input.dynamic-input, td > form > button
+{
+    font-size: 100%;
+}
+
+form, form > button
+{
+    margin: 0;
+}
+
+/*  FORM    */
+
+#filter-box
+{
+    background-color: lightgray;
+    padding: 2px;
+    text-align: center;
+}
+
+#filter-list
+{
+    margin: 3px;
+    margin-bottom: 0;
+}
+
+.filter
+{
+    margin: 2px;
+    padding: 2px;
+    background-color: rgb(163, 163, 163);
+}
+
+.filter > .clicky
+{
+    border: 0.25px solid rgb(59, 59, 59);
+    margin: 2px;
+    padding: 2px;
+    background-color: crimson;
+    color: rgb(255, 255, 255);
+}
+
+.hider-checkbox
+{
+    margin: 0.5px;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-left: 2px;
+    background-color: cornflowerblue;
+}
+
+#preset-create-inputs
+{
+    margin: auto;
+    margin-top: 0.5%;
+    text-align: center;
+}
+
+#create-button
+{
+    width: 100%;
+    height: 6%;
+    font-size: 170%;
+}
+
+/*  MENU    */
+
+nav
+{
+    margin-bottom: 2%;
+}
+nav#tableList
+{
+    text-align: center;
+    overflow: auto;
+    margin: 0.5%;
+}
+li
+{
+    list-style-type: square;
+}
+nav#tableList > li
+{
+    padding-left: 2%;
+    padding-right: 2%;
+    display: inline;
+}
+li > a
+{
+    color: grey;
+}
+li > a:hover, li > a.menu-select-a
+{
+    color: black;
+}
+
+/*  LOGIN   */
+
+#login-form
+{
+    text-align: center;
+    width: 100%;
+    margin-top: 10%;
+    max-height: 80%;
+}
+#login-form > input, #login-form > button
+{
+    text-align: center;
+    width: 50%;
+    height: 10%;
+    margin-bottom: 1%;
+    font-size: 200%;
+    /*background-color: rgba(255, 255, 255, 0.8);/*lapin*/
+}
+#login-form > h2
+{
+    margin: 5%;
+    font-size: 300%;
+}
+
+/*  PERMISSIONS */
+
+.table-priv-info
+{
+    display: inline-block;
+    border: 1px solid black;
+    margin: 3px;
+    padding: 2px;
+    background-color: lightgray;
+}
+
+.priv-list
+{
+    padding: 2px;
+    background-color: grey;
+}
+
+.table-name
+{
+    text-align: center;
+    margin: 1px;
+}
+
+#grant-onclick, #revoke-onclick
+{
+    display: none;
+}
+
+.grant-button
+{
+    background-color: rgb(120, 255, 120);
+}
+
+.grant-button::after
+{
+    content: 'Activer';
+}
+
+.revoke-button
+{
+    background-color: rgb(255, 120, 120);
+}
+
+.revoke-button::after
+{
+    content: 'Désactiver';
+}
+
+.revoke-button, .grant-button
+{
+    border: 0.5px solid rgb(50, 50, 50);
+    margin: 0.5px;
+}
+
+#user-priv-title
+{
+    text-align: center;
+}
+
+/*  GENERAL */
+
+.tab
+{
+    display: inline-block;
+    margin-left: 40px;
+}
+
+button
+{
+    border-radius: 5px;
+}
