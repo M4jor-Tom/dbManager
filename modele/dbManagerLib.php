@@ -5,11 +5,7 @@ Développeur: Tom VAUTRAY
 Contraintes de fonctionnement: 
     -Le DBMS doit être MySQL
     -Les tables doivent être créées avec InnoDB
-    -Aucune base de données, table ou colonne ne doit contenir de point(s) (.) dans son nom
-    -Les views doivent être appelées de la manière suivante: 'origin_table.view_name' (oui, avec un point)
     -Les contraintes de clés étrangères doivent être appliquées sur chaque table
-    -Les tables de jointures doivent nommer leurs clés étrangères (FOREIGN KEY) de la même manière que ces clés sont appelées dans leurs tables d'origines
-        -> Les tables jointes entre elles sans table de jointures peuvent avoir des noms de clés différentes
 */
 
 /*require 'utilisateurs.php';
@@ -110,6 +106,13 @@ foreach($utilisateurs as $user)
             $hiddenTables = [];
         }
         
+function swap(&$a, &$b)
+{
+    $temp = $a;
+    $a = $b;
+    $b = $temp;
+}
+
 //String functions
 function inString($haystack, $needle)
 {
@@ -423,17 +426,26 @@ function array_orderByKey($model, $shuffled, $countControl = false)
 
 function array_minus($positiveArray, $negativeArray, $identification = 'value')
 {
-    foreach($positiveArray as $key => $value)
+    if($identification === 'key')
     {
-        if(
-            ($identification === 'value' AND array_search($value, $negativeArray)) OR
-            ($identification === 'key' AND isset($negativeArray[$key])) OR
-            ($identification === 'both' AND array_search($value, $negativeArray) AND isset($negativeArray[$key]))
-        )
+        foreach($negativeArray as $negKey => $negative)
+            if(isset($positiveArray[$negKey]))
+                unset($positiveArray[$negKey]);
+    }
+    elseif($identification === 'value')
+    {
+        foreach($positiveArray as $posKey => $positive)
         {
-            unset($positiveArray[$key]);
+            if(in_array($positive, $negativeArray))
+                unset($positiveArray[$posKey]);
         }
     }
+    elseif($identification === 'both')
+    {
+
+    }
+    else var_dump('<array_minus> Error: unknown identification' . $identification);
+    
     return $positiveArray;
 }
 
@@ -628,7 +640,7 @@ function sqlDbManageConfig($db)
         false);
 
     if(!sqlGetJoinList($db, $tableConfigTableName) AND !sqlGetJoinList($db, $columnsConfigTableName) AND !sqlGetJoinList($db, $pivotDatasTableName))
-    //[shit-flag]
+    //[shit-flag]Mauvais contrôle d'existance des contraintes
     {
         sqlQuery($db, "
             ALTER TABLE $tableConfigTableName 
@@ -911,7 +923,6 @@ function sqlManagePivotForeignKeysDatas($db, $tableName, $updatePivotTable = fal
     {
         //Pour chaque donnée de pivot concernant la table
         //Où la pivotExtraJoinKey n'est pas entièrement contenue dans la pivotShowKey
-
         //Mise à jour de la table de config des pivots si besoins / demandé
         $pivotJoinTable = $pivotData['pivotTable']['Name'];
         if(
@@ -1122,7 +1133,7 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
     $result = '';
 
     if($elementsProperties)
-    {//var_dump($elementsProperties);
+    {
         //Si l'élément n'est pas vide
         $firstLoop = true;
         $keyWord = $includeKeyWord ? "$clauseType " : ' ';
@@ -1156,14 +1167,21 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
             )
             . $fieldQuote;
             $tableId = implode('.', [$databaseName, $tableName]);
-            
+
             if(!in_array($clauseType, ['FROM']) AND !inString($clauseType, 'JOIN')) 
             {
-                $columnName = $fieldQuote . array_funnel($elementProperties, ['Name' => 'dest', 'Key' => 'dest'])['dest'] . $fieldQuote;
-                $columnId = !(isset($elementProperties['Ignore']) AND in_array('Table', $elementProperties['Ignore'])) 
-                    ?   implode('.', [$tableId, $columnName])
-                    :   $columnName;
+                $column = array_funnel($elementProperties, ['Name' => 'dest', 'Key' => 'dest'])['dest'];
+                $columnId = $columnName = [];
+                foreach((array)$column as $nIndex => $singleColumn)
+                {
+                    $columnName[$nIndex] = $fieldQuote . $singleColumn . $fieldQuote;
+                    $columnId[] = !(isset($elementProperties['Ignore']) AND in_array('Table', $elementProperties['Ignore'])) 
+                        ?   implode('.', [$tableId, $columnName[$nIndex]])
+                        :   $columnName[$nIndex];
+                }
+                $columnId = implode(',', $columnId);
             }
+
             
             //Selon la clause MySQL
             switch($clauseType)
@@ -1173,6 +1191,17 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
                     //Pas la première fois
                     $result .= ($firstLoop === true ? $keyWord : ', ');
     
+                    //Si une fonction affecte cet élément
+                    if(isset($elementProperties['function']) AND $elementProperties['function'] != '')
+                    {
+                        $distinct = 
+                            isset($elementProperties['distinct'])
+                                ?   'distinct '
+                                :   '';
+                        
+                        $columnId = "$elementProperties[function]($distinct $columnId)";
+                    }
+
                     //Si l'élément à un nom
                     if(isset($elementProperties['Rename']) AND $elementProperties['Rename'] != '')
                     {
@@ -2443,9 +2472,9 @@ function sqlGetProcedures($db, $dbName, $property = 'Name')
     return $procedures;
 }
 
-function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable', $properties = ['Name'])
+function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable', $properties = ['Name'], $swapSides = false)
 {
-    global $dbName, $tableConfigTableName, $showKeyColumnName;
+    global $dbName, $allString, $tableConfigTableName, $showKeyColumnName;
     if($mode === 'pivot')
     {
         $tableConfigColumnName = 'Is_full_pivot_join_table';
@@ -2460,7 +2489,7 @@ function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable
         return [];
     }
 
-
+    //Toutes les tables de jointures pivot/inter
     $possibleTables =
         array_column(
             sqlSelect(
@@ -2474,24 +2503,29 @@ function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable
             ), 
             $showKeyColumnName
         );
-    $return = $possibleTables;
+
+    $return = [];
     if($relatedTableName != '')
         foreach($possibleTables as $possibleTable)
         {
-            foreach(
-                array_column_keep_key(
-                    sqlGetJoinList($db, $relatedTableName, true, '', [], true),
-                    $side
-                ) as $constraintName => $sidedJoin)
+            foreach(sqlGetJoinList($db, $relatedTableName, true, '', [], true, $swapSides) as $constraintName => $join)
             {
-                $return[$constraintName] = array_return($sidedJoin, $properties);
+                if(in_array($join[$side]['Name'], $possibleTables))
+                    foreach($join as $sideName => $sidedJoin)
+                        if($properties === $allString)
+                            //$allString = on retourne toutes les caractéristiques du joinArray
+                            $return[$constraintName][$sideName] = $sidedJoin;
+                        else
+                            //array = on ne retourne que ce qui est demandé
+                            $return[$constraintName][$sideName] = array_return($sidedJoin, $properties);
             }
         }
+        
     else
     {
-        return $possibleTables;
+        $return = $possibleTables;
     }
-
+    
     return $return;
 }
 
@@ -2608,8 +2642,8 @@ function sqlJoin($db,   $rootTable,     //Table principale à laquelle on souhai
     }
 
     
-    foreach($joinArray as $joinElement) /*if(isset($joinElement['Table'], $joinElement['rootJoinKey'], $joinElement['showKey']))*/
-    {
+    foreach($joinArray as $joinElement)
+    {var_dump($joinElement);
         //Pour chaque table extra
         //Obtenir sa clé primaire, si elle n'est pas spécifiée par l'utilisateur, sinon la récupérer
         
@@ -2646,7 +2680,7 @@ function sqlJoin($db,   $rootTable,     //Table principale à laquelle on souhai
     return $htmlDatalists;
 }
 
-function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $returnFilters = [], $tableNameIsReferenced = false)
+function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $returnFilters = [], $tableNameIsReferenced = false, $swapSides = false)
 {
     //foreach Join/constraint:
     //  -columnAlias
@@ -2849,9 +2883,9 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
             $joinDatas[$joinData['constraintName']]['columnAlias'] = $joinData['columnAlias'];
         }
 
-        $joinDatas[$joinData['constraintName']]['rootTable']['originTableName'] = $tableName;
+        $joinDatas[$joinData['constraintName']][$originTableSide]['originTableName'] = $tableName;
 
-        $joinDatas[$joinData['constraintName']][$originTableSide]['Name'] = 
+        $joinDatas[$joinData['constraintName']]['rootTable']['Name'] = 
             $tableRename === ''
                 ?   $joinData['rootTableName']
                 :   $tableRename;
@@ -2860,11 +2894,18 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
         $joinDatas[$joinData['constraintName']]['rootTable']['joinKey'][$joinData['POSITION_IN_UNIQUE_CONSTRAINT'] - 1] = $joinData['rootJoinKey'];
         $joinDatas[$joinData['constraintName']]['rootTable']['showKey'] = array_column(sqlGetShowKey($db, $joinData['rootTableName']), 'Name');
 
-        $joinDatas[$joinData['constraintName']][$otherTableSide]['Name'] = $joinData['extraTableName'];
+        $joinDatas[$joinData['constraintName']]['extraTable']['Name'] = $joinData['extraTableName'];
 
         $joinDatas[$joinData['constraintName']]['extraTable']['primaryKey'] = (array)explode(',', sqlGetPrimaryKey($db, $joinData['extraTableName']));
         $joinDatas[$joinData['constraintName']]['extraTable']['joinKey'][$joinData['POSITION_IN_UNIQUE_CONSTRAINT'] - 1] = $joinData['extraJoinKey'];
         $joinDatas[$joinData['constraintName']]['extraTable']['showKey'] = array_column(sqlGetShowKey($db, $joinData['extraTableName']), 'Name');
+
+        if($swapSides)
+        {
+            $temp = $joinDatas[$joinData['constraintName']]['extraTable'];
+            $joinDatas[$joinData['constraintName']]['extraTable'] = $joinDatas[$joinData['constraintName']]['rootTable'];
+            $joinDatas[$joinData['constraintName']]['rootTable'] = $temp;
+        }
 
         //La donnée a prit la forme voulue, on peut détruire son ancienne forme
         unset($joinDatas[$nIndex]);
@@ -2887,27 +2928,47 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
 //Cette fonction va ajouter des select correspondants aux nombres de jointures existants
 //dans les tables d'interJoin qu'elle trouvera
 //[ATTENTION] Pour utiliser cette fonction, un GROUP BY rootTable.primaryKey est obligatoire
-function sqlGetInterJoinSelects($db, $rootTableName)
+function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '')
 {
-    if($joinTables = sqlGetJoinTables($db, 'inter', $rootTableName))
+    global $dbName, $allString;
+
+    //Obtention des contraintes de type interJoin affectant la table
+    $side = 'rootTable';
+    if($joinTables = sqlGetJoinTables($db, 'inter', $rootTableName, $side, $allString))
     {
-        $countDistinctSelects = [];
-        var_dump($joinTables);
-        foreach($joinTables as $nIndex => $joinTable)
+        $return['selectArray'] = [];
+        $return['joinArray'] = [];
+        
+        $nIndex = 0;
+        foreach($joinTables as $constraintName => $joinTableInfo)
         {
             //Pour chaque interJoin
-    
+            $count = array_minus($joinTableInfo[$side]['primaryKey'], $joinTableInfo[$side]['joinKey']);
+
+            $return['selectArray'][] =
+            [
+                'Database' => $dbName,
+                'Table' => 'tempjoin_' . $constraintName,
+                'Name' => $count,
+                'Rename' => 'Count of ' . $constraintName,
+                'function' => 'COUNT',
+                'distinct' => true
+            ];
+
+            swap($joinTableInfo['rootTable'], $joinTableInfo['extraTable']);
+            $joinTableInfo['rootTable']['Name'] = $workTableName;
+            $joinTableInfo['extraTable']['Rename'] = 'tempjoin_' . $constraintName;
+            $return['joinArray'][$constraintName] = $joinTableInfo;
         }
-    
-        return $countDistinctSelects;
     }
     else return [];
+    return $return;
 }
 
 function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], $tableRename = '')
 {
     global $dbName;
-
+    
     $selectArray = isset($selectArray)
         ?   $selectArray
         :   [];
@@ -2962,7 +3023,7 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
                                 $joinsList[/*"$constraintName-" . implode(',', $newJoin['rootTable']['joinKey']) . '-' . implode(',', $newJoin['extraTable']['joinKey'])*/] = $newJoin;
                             }
 
-    //Enrichissement du selectArray et du joinArray
+    //Enrichissement du selectArray
     $mainSelectArray = [];
     $joinSelectArray = [];
     $joinedPivotSelectArray = [];
@@ -3027,7 +3088,9 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
         $joinArray[$constraintName]['extraTable']['Rename'] = 'tempjoin_' . $constraintName;
     }
 
-    $interJoinSelects = sqlGetInterJoinSelects($db, $tableName);
+    $interJoinTools = sqlGetInterJoinTools($db, $tableName, $tableRename);
+    $joinArray = array_merge($joinArray, $interJoinTools['joinArray']);
+    var_dump($joinArray);
 
     //$selectArray sorting
     //ksort($selectArray);
@@ -3060,7 +3123,7 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
         array_merge(
             $joinSelectArray,
             $mainSelectArray,
-            $interJoinSelects,
+            $interJoinTools['selectArray'],
             $joinedPivotSelectArray,
             $elseSelectArray
         );
@@ -3150,14 +3213,14 @@ function sqlPivot(
                                         'Database' => $dbName,
                                         'edittable' => $pivotData['pivotTable']['Name'],
                                         'primaryKey' => $pivotData['pivotPrimaryKey'],
-                                        'editKey' => $joinShowColumn
+                                        'editkey' => $joinShowColumn
                                     ]
                                 )
                             :   [
                                     'Database' => $dbName,
                                     'edittable' => $pivotData['pivotTable']['Name'],
                                     'primaryKey' => $pivotData['pivotTable']['primaryKey'],
-                                    'editKey' => $joinShowColumn
+                                    'editkey' => $joinShowColumn
                                 ];
                                 
                     //La nouvelle colonne est ajoutée au selectArray
@@ -3687,8 +3750,7 @@ function getRelationnalTable(
     $userGrants,
     $directQueryGlobal = NULL,
     $indexUrl = 'index.php',
-    $returnType = 'htmlTable',
-    &$keys = []
+    $returnType = 'htmlTable'
 )
 {
     global $dbName, $tableConfigTableName, $columnsConfigTableName, $usersTableName, $showKeyColumnName, $idString, $contentString;
@@ -3781,7 +3843,7 @@ function getRelationnalTable(
         'WHERE' => globalToArray($directQueryGlobal, 'WHERE', $workTable, $execute, $selectArray, $columnsAttributes, $joinArray),
         'GROUP BY' => $primaryColumns,
         'ORDER BY' => globalToArray($directQueryGlobal, 'ORDER BY', $workTable)
-    ], $execute, 'drop', ['SELECT', 'WHERE'], false);
+    ], $execute, 'drop', ['SELECT', 'WHERE'], true);
     
     if($returnType === 'htmlDatalist')
     {
@@ -3835,7 +3897,7 @@ function getRelationnalTable(
         $return = 
             htmlFilterBox($_GET, array_keys($columnsAttributes), $indexUrl, $selectArray) . 
             $htmlTable .
-            htmlCreateInputs($db, $originTable, array_keys($columnsAttributes), $userGrants, $indexUrl . rebuildGetString());
+            htmlCreateInputs($db, $originTable, $columnsAttributes, $userGrants, $indexUrl . rebuildGetString());
     }
 
     //Affichage html
@@ -3912,7 +3974,7 @@ function htmlTable(
 
     //Création du contenu html
     $html = "<table $tableElementsEdition[table]>";
-    
+
     foreach($datas as $index => $tuple)
     {
         //Pour chaque ligne
@@ -4187,31 +4249,38 @@ function htmlDatalist(
     }
 }
 
-function htmlCreateInputs($db, $tableName, $listsInfo, $userGrants, $indexUrlWithGets)
+function htmlCreateInputs($db, $tableName, $columnsAttributes, $userGrants, $indexUrlWithGets)
 {
     global $dbName;
 
     //Récupérer chaque colonne de la table et dire si l'on peut créer une occurence sans initialiser chaque colonne
-    $selectedTableColumns = [];
     $columnsInitialisationInputs = '<div id = \'preset-create-inputs\'>';
     $hiddenColumnsNames = sqlGetTableHiddenColumns($db, $tableName);
+    
     foreach(array_cross(sqlGetColumnsProperties($db, $tableName, ['Field', 'Default'])) as $nIndex => $column)
         if(!in_array($column['Field'], $hiddenColumnsNames))
+        {
+            $columnsAttributes[$column['Field']]['Default'] = $column['Default'];
+        }
+        else unset($columnsAttributes[$column['Field']]);
+    
+    foreach($columnsAttributes as $columnName => $attributes)
     {
         $class = $required = '';
-        if($column['Default'] === NULL)
+        if($attributes['edittable'] === $tableName OR !isset($attributes['Database']))
+            $attributes['Database'] = $dbName;
+
+        if(!isset($attributes['Default']) OR $attributes['Default'] === NULL)
         {
             //S'il n'y a pas de valeur par défaut (colonne NULL ou aucune AUCUNE)
             try
             {
                 //La colonne est NULL
-                sqlQuery($db, "SELECT DEFAULT($column[Field]) FROM $tableName");
-                $selectedTableColumns[$column['Field']] = false;
+                sqlQuery($db, "SELECT DEFAULT($attributes[editkey]) FROM $attributes[edittable]");
             }
             catch(Exception $e)
             {
                 //Cette colonne DOIT être initialisée à la création
-                $selectedTableColumns[$column['Field']] = true;
                 $required = ' required';
                 $class = ' class = \'required\'';
             }
@@ -4219,12 +4288,21 @@ function htmlCreateInputs($db, $tableName, $listsInfo, $userGrants, $indexUrlWit
         else
         {
             //Cette colonne à une valeur par défaut
-            $selectedTableColumns[$column['Field']] = false;
         }
-        $list = isset($lists[$column['Field']])
-            ?   ' list = \'' . $lists[$column['Field']] . '\''
+
+        $list = isset($attributes['list'])
+            ?   $attributes['list']
             :   '';
-        $columnsInitialisationInputs .= "<input$list type = 'text' name = 'field-$column[Field]' placeholder = '$column[Field]'$class$required>";
+
+        $listPk = isset($attributes['listPrimaryKey'])
+            ?   $attributes['listPrimaryKey']
+            :   '';
+
+        $displayKey = isset($attributes['displaykey'])
+            ?   $attributes['displaykey']
+            :   '';
+            
+        $columnsInitialisationInputs .= "<input list = '$list' type = 'text' name = '-$attributes[Database]-.-$attributes[edittable]-.-$attributes[editkey]-.-$list-.-$listPk-.-$displayKey-' placeholder = '$columnName' $class$required>";
     }
     $columnsInitialisationInputs .= '</div>';
 

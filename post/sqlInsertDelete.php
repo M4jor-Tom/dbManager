@@ -8,36 +8,60 @@ if(isset($db, $_POST['table'], $_POST['queryType']) AND sqlIndb($db, $_POST['tab
     if($_POST['queryType'] === 'insert')
     {
         //Récupérer les champs qui viennent de la saisie de l'utilisateur
-        $presetColumns = [];
-        $presetValues = [];
+        $presets = [];
+        $executeQuery = true;
         foreach($_POST as $name => $value) 
-            if(preg_match('/field-(\w+)/', $name, $matches) AND in_array($matches[1], sqlGetColumnsProperties($db, $table, 'Field')) AND $value)
+            if(preg_match('/^-(\w+)-.-(\w+)-.-(\w+)-.-(\w*)-.-([\w,]*)-.-(\w*)-$/', $name, $matches) AND in_array($matches[3], sqlGetColumnsProperties($db, $table, 'Field')) AND $value)
             {
-                //mactches[1] protégé des injections
-                $presetColumns[] = $matches[1];
-                $presetValues[] = $value;
-            }
-            elseif(preg_match('/constraint-(\w+)/', $name, $matches) AND $value)
-            {
-                $joins = sqlGetJoinList($db, $table);
-                if(isset($joins[$matches[1]]))
+                //mactches[3] protégé des injections
+                //$presetDb = securedContentPick(sqlGetDbs($db), $matches[1]);
+                $presetTable = securedContentPick($dbTables, $matches[2]);
+                $presets[$presetTable]['columns'][] = $matches[3];
+                var_dump($_POST, $matches[0], $presetTable);
+                if($matches[4] AND $matches[5] AND $matches[6])
                 {
-                    //matches[1] protégé des injections
-                    //La contraine concerne-t-elle la table ?
-                    foreach($joins[$matches[1]]['rootTable']['joinKey'] as $rootJoinColumn)
-                    {
-                        //Pour chaque colonne de la table appartenant à une joinKey
-                        $presetColumns[] = $rootJoinColumn;
-                        $presetValues[] = /*?*/NULL;
-                    }
+                    $listTable = securedContentPick($dbTables, $matches[4]);
+                    $listPk = 
+                        implode(
+                            ',',
+                            securedContentPickArray(
+                                sqlGetColumnsProperties(
+                                    $db,
+                                    $listTable,
+                                    ['Field']
+                                ),
+                                explode(
+                                    ',',
+                                    $matches[5]
+                                )
+                            )
+                        );
+                    $displayedColumn = securedContentPick(sqlGetColumnsProperties($db, $listTable, ['Field']), $matches[6]);
+                    $insertedValue = sqlSelect($db, "SELECT $listPk FROM $listTable WHERE $displayedColumn = ?", $value);
+                    
+                    if(isset($insertedValue[0]))
+                        $insertedValue = implode(',', numericKeys($insertedValue[0], 'drop'));
+                    else $executeQuery = false;
                 }
+                else $insertedValue = $value;
+                $presets[$presetTable]['values'][] = $insertedValue;
             }
 
         //var_dump($db, $table, $presetColumns, $presetValues);
-        sqlInsert($db, $table, $presetColumns, $presetValues);
+        //On ajoute en premier les données de la table séléctionnée
+        if($executeQuery)
+        {
+            sqlInsert($db, $table, $presets[$table]['columns'], $presets[$table]['values']);
 
-        //Correction des jointures (Création)
-        sqlFillMissingJoins($sudo[$dbName]);
+            //On ajoute ensuite les données qui sont pas dans la table séléctionnée, ou l'utilisateur a mit une valeur
+            foreach($presets as $tableName => $preset)
+                if($tableName != $table AND count($preset['columns']) === count($preset['values']))
+                    //[shit-flag] la clé primaire manque car il n'y a pas d'auto incrément pour les tables de pivot
+                    sqlInsert($db, $tableName, $preset['columns'], $preset['values']);
+            
+            //Correction des jointures (Création)
+            sqlFillMissingJoins($sudo[$dbName]);
+        }
     }
     elseif($_POST['queryType'] === 'delete' AND isset($_POST['primaryKey'], $_POST['primaryValue']) AND sqlIntable($db, $table, $primaryKey = explode(',', $_POST['primaryKey'])))
     {
