@@ -1196,10 +1196,10 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
                     {
                         $distinct = 
                             isset($elementProperties['distinct'])
-                                ?   'distinct '
+                                ?   'DISTINCT '
                                 :   '';
                         
-                        $columnId = "$elementProperties[function]($distinct $columnId)";
+                        $columnId = "$elementProperties[function]($distinct$columnId)";
                     }
 
                     //Si l'élément à un nom
@@ -1254,14 +1254,14 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
                     if(isset($elementProperties['extraTable']['Rename']) AND $elementProperties['extraTable']['Rename'] != '')
                     {
                         //En renommant la table jointe (['extraTableRename'] spécifié ?)
-                        $extraTableNotation = $elementProperties['extraTable']['Name'] . ' ' . $elementProperties['extraTable']['Rename'];
-                        $extraTableName = $elementProperties['extraTable']['Rename'];
+                        $extraTableNotation = '`' . $elementProperties['extraTable']['Name'] . '` `' . $elementProperties['extraTable']['Rename'] . '`';
+                        $extraTableName = '`' . $elementProperties['extraTable']['Rename'] . '`';
                     }
                     else
                     {
                         //Sans renommer la table jointe
-                        $extraTableNotation = $elementProperties['extraTable']['Name'];
-                        $extraTableName = $elementProperties['extraTable']['Name'];
+                        $extraTableNotation = '`' . $elementProperties['extraTable']['Name'] . '`';
+                        $extraTableName = '`' . $elementProperties['extraTable']['Name'] . '`';
                     }
 
                     $result .= $keyWord;
@@ -1273,7 +1273,7 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
                         $result .= $firstJoinColumnsPassed
                             ?   ' AND '
                             :   $extraTableNotation . ' ON ';
-                        $result .= $elementProperties['rootTable']['Name'] . ".`$rootJoinColumn` = $extraTableName." . ((array)$elementProperties['extraTable']['joinKey'])[$nIndex] . ' ';
+                        $result .= '`' . $elementProperties['rootTable']['Name'] . "`.`$rootJoinColumn` = $extraTableName.`" . ((array)$elementProperties['extraTable']['joinKey'])[$nIndex] . '` ';
                         $firstJoinColumnsPassed = true;
                     }
                     break;
@@ -2643,30 +2643,35 @@ function sqlJoin($db,   $rootTable,     //Table principale à laquelle on souhai
 
     
     foreach($joinArray as $joinElement)
-    {var_dump($joinElement);
+    {
         //Pour chaque table extra
         //Obtenir sa clé primaire, si elle n'est pas spécifiée par l'utilisateur, sinon la récupérer
         
         //Enrichissement des attributs html des cases de tableau
-        $rootJoinKey = implode(',', $joinElement['rootTable']['joinKey']);
-        $columnsAttributes[$rootJoinKey] = 
-        [
-            'edittable' => $joinElement['rootTable']['originTableName'], //$rootTable
-            'primarykey' => $joinElement['rootTable']['primaryKey'],
-            'editkey' => 
-                isset($originColumns[$rootJoinKey])
-                    ?   $originColumns[$rootJoinKey]
-                    :   $rootJoinKey,
-            'listPrimaryKey' => implode(',', (array)$joinElement['extraTable']['primaryKey']),
-            'list' => $joinElement['extraTable']['Name'],
-            'extraTableQueryRename' => 
-                isset($joinElement['extraTable']['Rename'])
-                    ?   $joinElement['extraTable']['Rename']
-                    :   '',
-            'displaykey' => implode(',', $joinElement['extraTable']['showKey'])
-        ];
+        //$rootJoinKey = implode(',', $joinElement['rootTable']['joinKey']);
+        foreach($joinElement['rootTable']['joinKey'] as $rootJoinColumn)
+            if(!isset($columnsAttributes[$rootJoinColumn]))
+            {
+                $columnsAttributes[$rootJoinColumn] =
+                [
+                    'edittable' => $joinElement['rootTable']['originTableName'], //$rootTable
+                    'primarykey' => $joinElement['rootTable']['primaryKey'],
+                    'editkey' => 
+                        isset($originColumns[$rootJoinColumn])
+                            ?   $originColumns[$rootJoinColumn]
+                            :   $rootJoinColumn,
+                    'listPrimaryKey' => implode(',', (array)$joinElement['extraTable']['primaryKey']),
+                    'list' => $joinElement['extraTable']['Name'],
+                    'extraTableQueryRename' => 
+                        isset($joinElement['extraTable']['Rename'])
+                            ?   $joinElement['extraTable']['Rename']
+                            :   '',
+                    'displaykey' => implode(',', $joinElement['extraTable']['showKey'])
+                ];
+
+                sqlCheckAttributesToMakeColumnEditable($columnsAttributes[$rootJoinColumn]);
+            }
         
-        sqlCheckAttributesToMakeColumnEditable($columnsAttributes[$rootJoinKey]);
         
         //Enrichissement du contenu html (datalists)
         $htmlDatalists .= getRelationnalTable($db, 
@@ -2944,13 +2949,18 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '')
         {
             //Pour chaque interJoin
             $count = array_minus($joinTableInfo[$side]['primaryKey'], $joinTableInfo[$side]['joinKey']);
+            
+            if(isset($joinTableInfo['columnAlias']))
+                $rename = $joinTableInfo['columnAlias'];
+            else $rename = $constraintName;
 
             $return['selectArray'][] =
             [
                 'Database' => $dbName,
                 'Table' => 'tempjoin_' . $constraintName,
                 'Name' => $count,
-                'Rename' => 'Count of ' . $constraintName,
+                'Rename' => 
+                    'Count of ' . $rename,
                 'function' => 'COUNT',
                 'distinct' => true
             ];
@@ -3068,7 +3078,6 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
                 ?   $join['columnAlias']
                 :   $rootTablejoinColumn;
 
-            
             if
             (
                 $key = array_search(
@@ -3089,8 +3098,9 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
     }
 
     $interJoinTools = sqlGetInterJoinTools($db, $tableName, $tableRename);
-    $joinArray = array_merge($joinArray, $interJoinTools['joinArray']);
-    var_dump($joinArray);
+    $joinArray = isset($interJoinTools['joinArray'])
+        ?   array_merge($joinArray, $interJoinTools['joinArray'])
+        :   $joinArray;
 
     //$selectArray sorting
     //ksort($selectArray);
@@ -3123,8 +3133,10 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
         array_merge(
             $joinSelectArray,
             $mainSelectArray,
-            $interJoinTools['selectArray'],
             $joinedPivotSelectArray,
+            isset($interJoinTools['selectArray'])
+                ?   $interJoinTools['selectArray']
+                :   [],
             $elseSelectArray
         );
         
@@ -3843,7 +3855,7 @@ function getRelationnalTable(
         'WHERE' => globalToArray($directQueryGlobal, 'WHERE', $workTable, $execute, $selectArray, $columnsAttributes, $joinArray),
         'GROUP BY' => $primaryColumns,
         'ORDER BY' => globalToArray($directQueryGlobal, 'ORDER BY', $workTable)
-    ], $execute, 'drop', ['SELECT', 'WHERE'], true);
+    ], $execute, 'drop', ['SELECT', 'WHERE'], false);
     
     if($returnType === 'htmlDatalist')
     {
@@ -4120,7 +4132,7 @@ function htmlTable(
                 }
                 $additiveAttributes = ltrim($additiveAttributes);
             }
-            else var_dump('Missing in $columnsAttributes: ' . $column);
+            elseif(!inString($column, 'Count of')) var_dump('Missing in $columnsAttributes: ' . $column);
 
             $title = [];
             $entitledKey = '';
