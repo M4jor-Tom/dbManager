@@ -41,6 +41,8 @@ foreach($utilisateurs as $user)
     $allString = '__ALL__';
     $valueString = '__VALUE__'; //Doit matcher avec functions.js/changeAttribute
     $thisString = '__THIS__';   //Doit matcher avec functions.js/changeAttribute
+    $operatorString = '__OPERATOR__';
+    $rootJoinValueString = '__ROOTJOINVALUE__';
 
     $tableConfigTableName = 'config_tables';
     $columnsConfigTableName = 'config_columns';
@@ -1241,7 +1243,7 @@ function sqlArrayToClause(  $clauseType,    //Commande MySQL comportant une clau
                                 ? 'NULL'
                                 : $elementProperties['Value'];
     
-                    //Condition
+                    //Clause
                     $result .= " $columnId $elementProperties[Operator] $quote$value$quote";
                     break;
     
@@ -1410,6 +1412,11 @@ function sqlSelect($db, $query, $execute = NULL, $numericKeys = 'keep', $byPass 
                     'ORDER BY' => '<br>ORDER BY',
                     'GROUP BY' => '<br>GROUP BY'
                 ], $query);
+                if(isset($execute))
+                    var_dump(
+                        (array)$execute, 
+                        count_chars($query)[ord('?')] === count($execute)
+                    );
         }
     }
     
@@ -2933,9 +2940,13 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
 //Cette fonction va ajouter des select correspondants aux nombres de jointures existants
 //dans les tables d'interJoin qu'elle trouvera
 //[ATTENTION] Pour utiliser cette fonction, un GROUP BY rootTable.primaryKey est obligatoire
-function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '')
+function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUrl = '')
 {
-    global $dbName, $allString;
+    global $dbName, $allString, $operatorString, $rootJoinValueString;
+    $indexUrl =
+        $indexUrl != ''
+            ?   $indexUrl
+            :   'index.php';
 
     //Obtention des contraintes de type interJoin affectant la table
     $side = 'rootTable';
@@ -2948,34 +2959,58 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '')
         foreach($joinTables as $constraintName => $joinTableInfo)
         {
             //Pour chaque interJoin
-            $count = array_minus($joinTableInfo[$side]['primaryKey'], $joinTableInfo[$side]['joinKey']);
+            $countable = array_minus($joinTableInfo[$side]['primaryKey'], $joinTableInfo[$side]['joinKey']);
             
             if(isset($joinTableInfo['columnAlias']))
                 $rename = $joinTableInfo['columnAlias'];
             else $rename = $constraintName;
 
+            $selectRename = 'Count of ' . $rename;
+
+            //Pour voir le comptage des jointures
             $return['selectArray'][] =
             [
                 'Database' => $dbName,
                 'Table' => 'tempjoin_' . $constraintName,
-                'Name' => $count,
-                'Rename' => 
-                    'Count of ' . $rename,
+                'Name' => $countable,
+                'Rename' => $selectRename,
                 'function' => 'COUNT',
                 'distinct' => true
             ];
 
+            //Comme la recherche de table d'interJointure s'est faite par table référencée, la table root et la table extra ont été inversées.
+            //On les échange de place
             swap($joinTableInfo['rootTable'], $joinTableInfo['extraTable']);
             $joinTableInfo['rootTable']['Name'] = $workTableName;
             $joinTableInfo['extraTable']['Rename'] = 'tempjoin_' . $constraintName;
             $return['joinArray'][$constraintName] = $joinTableInfo;
+            
+            //On donne le début des informations nécessaires à la création du href pour que l'utilisateur clique sur la requête rapide
+            $urlQuery = '';
+            $nIndex = 1;
+            foreach($joinTableInfo['extraTable']['joinKey'] as $joinColumn)
+            {
+                $urlQuery .= 
+                    "&f$nIndex" . "_Table=" . $joinTableInfo['extraTable']['Rename'] .
+                    "&f$nIndex" . "_Key=$joinColumn" .
+                    "&f$nIndex" . "_Operator=$operatorString" .
+                    "&f$nIndex" . "_Value=$rootJoinValueString";
+                    
+                $nIndex++;
+            }
+
+            $return['columnsAttributes'][$selectRename] =
+            [
+                //SELECT * FROM rootTable.originTableName WHERE extraTable[Rename].joinKey = rootTable.joinValue
+                'hrefForQuery' => $indexUrl . '?selectedtable=' . $joinTableInfo['rootTable']['originTableName'] . $urlQuery
+            ];
         }
     }
     else return [];
     return $return;
 }
 
-function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], $tableRename = '')
+function sqlGetJoinTools($db, $tableName, $tableRename = '', &$selectArray, &$joinArray, &$columnsAttributes)
 {
     global $dbName;
     
@@ -3098,9 +3133,14 @@ function sqlGetJoinTools($db, $tableName, &$selectArray = [], &$joinArray = [], 
     }
 
     $interJoinTools = sqlGetInterJoinTools($db, $tableName, $tableRename);
+
     $joinArray = isset($interJoinTools['joinArray'])
         ?   array_merge($joinArray, $interJoinTools['joinArray'])
         :   $joinArray;
+        
+    $columnsAttributes = isset($interJoinTools['columnsAttributes'])
+        ?   array_merge($columnsAttributes, $interJoinTools['columnsAttributes'])
+        :   $columnsAttributes;
 
     //$selectArray sorting
     //ksort($selectArray);
@@ -3651,12 +3691,17 @@ function sqlGetColumnsAttributes($db, $table, $checkEnum = false, $separator = '
     return $columnsAttributes;
 }
 
-function globalToArray($input, $clauseType, $table_, &$execute = [], $selectArray = [], $columnsAttributes = [], $joinArray = [])
-{//                                                                  $selectArray sert à connaître les noms d'origine des variables
-    //                                                                                  $columnsAttributes sert à connaître les noms de tables
-    //                                                                                                           $joinArray sert à renommer les tables si besoins
+function globalToArray(
+    $input, 
+    $clauseType, 
+    $workTable, 
+    &$execute = [], 
+    $selectArray = [],  //sert à connaître les noms d'origine des variables
+    $columnsAttributes = [],    //sert à connaître les noms de tables
+    $joinArray = [] //sert à renommer les tables si besoins
+)
+{
     global $dbName;
-    //var_dump($joinArray, $selectArray);
 
     $result = [];
     
@@ -3674,6 +3719,10 @@ function globalToArray($input, $clauseType, $table_, &$execute = [], $selectArra
                     if($matches[2] === 'Value')
                     {
                         $result['f' . (int)$matches[1]]['Value'] = '?';
+                        $inputValue = 
+                            is_numeric($inputValue)
+                                ?   (int)$inputValue
+                                :   $inputValue;
                         $result['f' . (int)$matches[1]]['Execute'] = $execute[] = $inputValue;
                     }
                     //Concaténer l'input dans $result
@@ -3707,7 +3756,7 @@ function globalToArray($input, $clauseType, $table_, &$execute = [], $selectArra
                                     elseif($value === $selected['Name'] AND isset($joinArray) AND $joinArray)
                                     {
                                         //[shit-flag]
-                                        $result[$filterKey]['Table'] = $joinArray[key($joinArray)]['rootTable']['TableName'];
+                                        $result[$filterKey]['Table'] = $joinArray[key($joinArray)]['rootTable']['Name'];
                                     }
                                 }
                             }
@@ -3715,6 +3764,7 @@ function globalToArray($input, $clauseType, $table_, &$execute = [], $selectArra
                     }
                 }
             }
+            
             break;
 
         case 'ORDER BY':
@@ -3765,7 +3815,16 @@ function getRelationnalTable(
     $returnType = 'htmlTable'
 )
 {
-    global $dbName, $tableConfigTableName, $columnsConfigTableName, $usersTableName, $showKeyColumnName, $idString, $contentString;
+    global 
+        $dbName,
+        $tableConfigTableName,
+        $columnsConfigTableName,
+        $usersTableName,
+        $showKeyColumnName,
+        $idString,
+        $contentString,
+        $operatorString,
+        $rootJoinColumnString;
     
     //Obtention de la clé primaire de la table
     $tablePrimaryKey = sqlGetPrimaryKey($db, $originTable);
@@ -3803,7 +3862,7 @@ function getRelationnalTable(
             );
             
         //Les tables de pivot et la table visée vont toutes les deux subire des jointures directes afin d'afficher les bons noms de colonnes/valeurs
-        sqlGetJoinTools($db, $originTable, $selectArray, $joinArray, $workTable);
+        sqlGetJoinTools($db, $originTable, $workTable, $selectArray, $joinArray, $columnsAttributes);
 
         sqlJoin($db, $originTable, $joinArray, $columnsAttributes, $selectArray, $htmlDatalists, $workTable, $userGrants/*, $datalistQuery*/);
         
@@ -3841,6 +3900,7 @@ function getRelationnalTable(
         ];
     }
     
+
     $datas = sqlSelect($db,
     [
         'SELECT' => $selectArray,
@@ -3855,7 +3915,8 @@ function getRelationnalTable(
         'WHERE' => globalToArray($directQueryGlobal, 'WHERE', $workTable, $execute, $selectArray, $columnsAttributes, $joinArray),
         'GROUP BY' => $primaryColumns,
         'ORDER BY' => globalToArray($directQueryGlobal, 'ORDER BY', $workTable)
-    ], $execute, 'drop', ['SELECT', 'WHERE'], false);
+    ], $execute, 'drop', ['SELECT', 'WHERE'], true);
+
     
     if($returnType === 'htmlDatalist')
     {
@@ -3870,9 +3931,24 @@ function getRelationnalTable(
     {
         //Si la table en question est la table d'utilisateurs
         $indexUrlWithGets = $indexUrl . rebuildGetString(true);
-        $cellMisc = $originTable === $usersTableName
-            ?   [array_column(sqlGetShowKey($db, $originTable), 'Name')[0] => "<a href = '$indexUrlWithGets&amp;uid=$idString'>$contentString</a>"] //[shit-flag] Première showColumn seulement
-            :   NULL;
+
+        //Seulement pour la table des utilisateurs (href vers uid)
+        if($originTable === $usersTableName)
+            $cellMisc = 
+                [
+                    array_column(sqlGetShowKey($db, $originTable), 'Name')[0] => 
+                        "<a href = '$indexUrlWithGets&amp;uid=$idString'>$contentString</a>"
+                ];
+        else
+            foreach(array_keys($datas[0]) as $column)
+                if(inString($column, 'Count of'))
+                {
+                    $cellMisc[$column] = "<a target='blank' href = '" . $columnsAttributes[$column]['hrefForQuery'] . "'>$contentString</a>";
+                }
+                else
+                {
+                    $cellMisc = NULL;
+                }
         
         $renames = [];
         foreach($showKeyArray as $nIndex => $showColumn)
@@ -3943,8 +4019,11 @@ function htmlTable(
     $deleteButton = false
 )
 {
-    global $idString;   //Chaîne de charactères remplacée par la clé primaire d'une donnée 'string'
-    global $contentString; // Chaîne de charactères remplacée par le contenu lui même dans une cellule
+    global 
+        $idString,   //Chaîne de charactères remplacée par la clé primaire d'une donnée 'string'
+        $contentString, // Chaîne de charactères remplacée par le contenu lui même dans une cellule
+        $operatorString,    //Chaîne de charactères remplacée par l'opérateur conditionnel pour requête 'Count of'
+        $rootJoinColumnString;  //Chaîne de charactères remplacée par une des colonnes de jointures côté root
     
     //var_dump($joinArray, $selectArray);
     
@@ -4100,13 +4179,48 @@ function htmlTable(
                 //Insérer la clé primaire dans la cellule
                 $cellMisc_temp[$column] = str_replace($idString, $primaryValue, $cellMisc_temp[$column]);
             }
-            
+
+            //Insertion de l'opérateur et des valeurs de jointure côté root si colonne count of (interJoin)
+            var_dump($column);
+            foreach($joinArray as $nIndex => $join)
+            {
+                var_dump($join['rootTable']['joinKey'], $join['extraTable']['Rename']);
+                foreach($join['rootTable']['joinKey'] as $rootJoinColumn)
+                {
+                    if(inString($column, 'Count of') AND $rootJoinColumn === $column)
+                    {
+                        $rootJoinValue = $tuple[$rootJoinColumn];
+                        $operator =
+                            is_string($rootJoinValue)
+                                ?   'REGEXP'
+                                :   '=';var_dump($column);
+                    }
+                }
+            }
+            var_dump(isset($cellMisc_temp[$column], $rootJoinValue, $operator), 
+            inString($cellMisc_temp[$column], $operatorString), 
+            inString($cellMisc_temp[$column], $rootJoinColumnString));
+
+            if
+            (
+                isset($cellMisc_temp[$column], $rootJoinValue, $operator) AND 
+                inString($cellMisc_temp[$column], $operatorString) AND 
+                inString($cellMisc_temp[$column], $rootJoinColumnString)
+            )
+            {
+                var_dump($columnsAttributes[$column]);
+
+                
+                $cellMisc_temp[$column] = str_replace($operatorString, $operator, $cellMisc_temp[$column]);
+                $cellMisc_temp[$column] = str_replace($rootJoinColumnString, $rootColumnValue, $cellMisc_temp[$column]);
+            }
+
             //Insertion du contenu dans le $cellMisc_temp s'il contient $contentString
             if(isset($cellMisc_temp[$column]) AND inString($cellMisc_temp[$column], $contentString))
             {
                 $cell = str_replace($contentString, $cell, $cellMisc_temp[$column]);
             }
-            
+
             //Mise en attributs html des attributs sql de chaque donnée
             $additiveAttributes = '';
 
@@ -4122,7 +4236,6 @@ function htmlTable(
                     //else var_dump($join);
                 }
             }
-
             //Ajout en attributs HTML de $columnsAttributes
             if(isset($columnsAttributes[$column]))
             {
@@ -4132,7 +4245,7 @@ function htmlTable(
                 }
                 $additiveAttributes = ltrim($additiveAttributes);
             }
-            elseif(!inString($column, 'Count of')) var_dump('Missing in $columnsAttributes: ' . $column);
+            else var_dump('Missing in $columnsAttributes: ' . $column);
 
             $title = [];
             $entitledKey = '';
@@ -4277,45 +4390,47 @@ function htmlCreateInputs($db, $tableName, $columnsAttributes, $userGrants, $ind
         else unset($columnsAttributes[$column['Field']]);
     
     foreach($columnsAttributes as $columnName => $attributes)
-    {
-        $class = $required = '';
-        if($attributes['edittable'] === $tableName OR !isset($attributes['Database']))
-            $attributes['Database'] = $dbName;
-
-        if(!isset($attributes['Default']) OR $attributes['Default'] === NULL)
+        if(!isset($attributes['hrefForQuery'])) 
+        //Cet attribut serait pour les count of, ce qui veut dire qu'il ne possède pas les attributs utilisés ci-dessous
         {
-            //S'il n'y a pas de valeur par défaut (colonne NULL ou aucune AUCUNE)
-            try
+            $class = $required = '';
+            if($attributes['edittable'] === $tableName OR !isset($attributes['Database']))
+                $attributes['Database'] = $dbName;
+
+            if(!isset($attributes['Default']) OR $attributes['Default'] === NULL)
             {
-                //La colonne est NULL
-                sqlQuery($db, "SELECT DEFAULT($attributes[editkey]) FROM $attributes[edittable]");
+                //S'il n'y a pas de valeur par défaut (colonne NULL ou aucune AUCUNE)
+                try
+                {
+                    //La colonne est NULL
+                    sqlQuery($db, "SELECT DEFAULT($attributes[editkey]) FROM $attributes[edittable]");
+                }
+                catch(Exception $e)
+                {
+                    //Cette colonne DOIT être initialisée à la création
+                    $required = ' required';
+                    $class = ' class = \'required\'';
+                }
             }
-            catch(Exception $e)
+            else
             {
-                //Cette colonne DOIT être initialisée à la création
-                $required = ' required';
-                $class = ' class = \'required\'';
+                //Cette colonne à une valeur par défaut
             }
+
+            $list = isset($attributes['list'])
+                ?   $attributes['list']
+                :   '';
+
+            $listPk = isset($attributes['listPrimaryKey'])
+                ?   $attributes['listPrimaryKey']
+                :   '';
+
+            $displayKey = isset($attributes['displaykey'])
+                ?   $attributes['displaykey']
+                :   '';
+                
+            $columnsInitialisationInputs .= "<input list = '$list' type = 'text' name = '-$attributes[Database]-.-$attributes[edittable]-.-$attributes[editkey]-.-$list-.-$listPk-.-$displayKey-' placeholder = '$columnName' $class$required>";
         }
-        else
-        {
-            //Cette colonne à une valeur par défaut
-        }
-
-        $list = isset($attributes['list'])
-            ?   $attributes['list']
-            :   '';
-
-        $listPk = isset($attributes['listPrimaryKey'])
-            ?   $attributes['listPrimaryKey']
-            :   '';
-
-        $displayKey = isset($attributes['displaykey'])
-            ?   $attributes['displaykey']
-            :   '';
-            
-        $columnsInitialisationInputs .= "<input list = '$list' type = 'text' name = '-$attributes[Database]-.-$attributes[edittable]-.-$attributes[editkey]-.-$list-.-$listPk-.-$displayKey-' placeholder = '$columnName' $class$required>";
-    }
     $columnsInitialisationInputs .= '</div>';
 
     //On n'affiche le formulaire de création que si l'on a le droit de créer des occurences
@@ -4629,6 +4744,11 @@ function htmlFilterBox($get, $keys, $indexUrl, $selectArray)
                     $sa = '</a>';
                 }
                 $cross[$lastFilter] .= " $a$value$sa ";
+                break;
+
+            case 'Table':
+            case 'table':
+                //[shit-flag] C'est juste pour pas tomber dans le default
                 break;
 
             default:
