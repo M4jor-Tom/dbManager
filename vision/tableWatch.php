@@ -44,9 +44,11 @@ if(isset($tablesProperties, $_GET['selectedtable']) AND in_array($_GET['selected
             }
 
         default:
+            $preTableTime = microtime(true) - $startTime;
             $table = getRelationnalTable($sudo[$dbName], $selectedTable, $userGrants, $directQueryGlobal);
+            $postTableTime = microtime(true) - $startTime;
     }
-
+    //var_dump($functionTime, $preTableTime, $postTableTime);
     ob_start();
     //Ce qui est affiché en dessous du tableau...
     ?>

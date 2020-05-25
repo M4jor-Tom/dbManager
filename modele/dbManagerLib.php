@@ -13,7 +13,7 @@ foreach($utilisateurs as $user)
 {
     echo "INSERT INTO utilisateurs(ID_utilisateur,Name,Prenom,Mot_de_passe,Token) VALUES($user[ID_utilisateur],'$user[Name]','$user[Prenom]','$user[Mot_de_passe]','$user[Token]');<br>";
 }*/
-
+$sqlGetJoinListTime = 0.0;
 //Variables globales
     $startTime = microtime(true);
     $nextTimeUseDisconnect = 0;
@@ -641,31 +641,32 @@ function sqlDbManageConfig($db)
         )ENGINE = INNODB;",
         false);
 
-    if(!sqlGetJoinList($db, $tableConfigTableName) AND !sqlGetJoinList($db, $columnsConfigTableName) AND !sqlGetJoinList($db, $pivotDatasTableName))
-    //[shit-flag]Mauvais contrôle d'existance des contraintes
-    {
-        sqlQuery($db, "
-            ALTER TABLE $tableConfigTableName 
-                ADD UNIQUE KEY `UNIQUE_TABLE_NAMES`(Name),
-                ADD KEY `FOREIGN_graph_abscissa`(ID_graph_abscissa),
-                ADD KEY `FOREIGN_graph_ordinate`(ID_graph_ordinate),
-                ADD CONSTRAINT FOREIGN KEY (`ID_graph_abscissa`) REFERENCES `$columnsConfigTableName` (`ID_column`),
-                ADD CONSTRAINT FOREIGN KEY (`ID_graph_ordinate`) REFERENCES `$columnsConfigTableName` (`ID_column`);
-    
-            ALTER TABLE $columnsConfigTableName
-                ADD UNIQUE KEY `UNIQUE_COLUMN_PER_TABLE` (ID_table, Name),
-                ADD CONSTRAINT FOREIGN KEY (ID_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE;
-    
-            ALTER TABLE $pivotDatasTableName
-                ADD KEY `FOREIGN_table`(ID_table),
-                ADD KEY `FOREIGN_joining_table`(ID_joining_table),
-                ADD KEY `FOREIGN_extra_table`(ID_extra_table),
-                ADD CONSTRAINT FOREIGN KEY (ID_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE,
-                ADD CONSTRAINT FOREIGN KEY (ID_joining_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE,
-                ADD CONSTRAINT FOREIGN KEY (ID_extra_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE;", 
-                false
-        );
-    }
+    if(isset($_GET['restructure']))
+        if(!sqlGetJoinList($db, $tableConfigTableName, false, '', [], false, false) AND !sqlGetJoinList($db, $columnsConfigTableName, false, '', [], false, false) AND !sqlGetJoinList($db, $pivotDatasTableName, false, '', [], false, false))
+        //[shit-flag]Mauvais contrôle d'existance des contraintes
+        {
+            sqlQuery($db, "
+                ALTER TABLE $tableConfigTableName 
+                    ADD UNIQUE KEY `UNIQUE_TABLE_NAMES`(Name),
+                    ADD KEY `FOREIGN_graph_abscissa`(ID_graph_abscissa),
+                    ADD KEY `FOREIGN_graph_ordinate`(ID_graph_ordinate),
+                    ADD CONSTRAINT FOREIGN KEY (`ID_graph_abscissa`) REFERENCES `$columnsConfigTableName` (`ID_column`),
+                    ADD CONSTRAINT FOREIGN KEY (`ID_graph_ordinate`) REFERENCES `$columnsConfigTableName` (`ID_column`);
+        
+                ALTER TABLE $columnsConfigTableName
+                    ADD UNIQUE KEY `UNIQUE_COLUMN_PER_TABLE` (ID_table, Name),
+                    ADD CONSTRAINT FOREIGN KEY (ID_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE;
+        
+                ALTER TABLE $pivotDatasTableName
+                    ADD KEY `FOREIGN_table`(ID_table),
+                    ADD KEY `FOREIGN_joining_table`(ID_joining_table),
+                    ADD KEY `FOREIGN_extra_table`(ID_extra_table),
+                    ADD CONSTRAINT FOREIGN KEY (ID_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE,
+                    ADD CONSTRAINT FOREIGN KEY (ID_joining_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE,
+                    ADD CONSTRAINT FOREIGN KEY (ID_extra_table) REFERENCES `$tableConfigTableName` (ID_table) ON DELETE CASCADE;", 
+                    false
+            );
+        }
 
     sqlQuery($db, "
         GRANT CREATE USER ON *.* TO 'dbLogger'@localhost;
@@ -2219,8 +2220,11 @@ function sqlGenerateColumnsTools($db, $tableName, $tablePrimaryKey = NULL, &$col
 
     $tableColumns = sqlGetColumnsProperties($db, $tableName, 'Field');
     
-    $rootJoinKey = array_column(sqlGetJoinList($db, $tableName, false, '', ['Table' => 'rootTable', 'Key' => 'joinKey']), 0);
-
+    if($omitRootJoinKey)
+        $rootJoinKey = array_column(sqlGetJoinList($db, $tableName, false, '', ['Table' => 'rootTable', 'Key' => 'joinKey']), 0);
+    else
+        $rootJoinKey = [];
+    
     foreach($tableColumns as $tableColumn)
     {
         if(
@@ -2479,7 +2483,7 @@ function sqlGetProcedures($db, $dbName, $property = 'Name')
     return $procedures;
 }
 
-function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable', $properties = ['Name'], $swapSides = false)
+function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable', $properties = ['Name'])
 {
     global $dbName, $allString, $tableConfigTableName, $showKeyColumnName;
     if($mode === 'pivot')
@@ -2512,10 +2516,13 @@ function sqlGetJoinTables($db, $mode, $relatedTableName = '', $side = 'rootTable
         );
 
     $return = [];
+    $keys = ($properties == ['Name'] OR $properties == 'Name')
+        ?   false
+        :   true;
     if($relatedTableName != '')
         foreach($possibleTables as $possibleTable)
         {
-            foreach(sqlGetJoinList($db, $relatedTableName, true, '', [], true, $swapSides) as $constraintName => $join)
+            foreach(sqlGetJoinList($db, $relatedTableName, true, '', [], true, $keys) as $constraintName => $join)
             {
                 if(in_array($join[$side]['Name'], $possibleTables))
                     foreach($join as $sideName => $sidedJoin)
@@ -2692,7 +2699,7 @@ function sqlJoin($db,   $rootTable,     //Table principale à laquelle on souhai
     return $htmlDatalists;
 }
 
-function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $returnFilters = [], $tableNameIsReferenced = false, $swapSides = false)
+function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $returnFilters = [], $tableNameIsReferenced = false, $keys = true)
 {
     //foreach Join/constraint:
     //  -columnAlias
@@ -2706,7 +2713,8 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
     //      -primaryKey (array)
     //      -joinKey (array)
     //      -showKey (array)
-    global $dbName, $joiningDataTableName, $tableConfigTableName, $columnsConfigTableName, $showKeyColumnName;
+    $start = microtime(true);
+    global $dbName, $joiningDataTableName, $tableConfigTableName, $columnsConfigTableName, $showKeyColumnName, $sqlGetJoinListTime;
     $tableNameColumn = $tableNameIsReferenced
         ?   'REFERENCED_TABLE_NAME'
         :   'TABLE_NAME';
@@ -2885,7 +2893,7 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
             ]
         ]
     ], NULL, 'drop', ['SELECT DISTINCT', 'LEFT JOIN']);
-
+    $queryTime = microtime(true) - $start;
     //Pour chaque (sous)donnée de jointure (une même contrainte va réapparaitre autant de fois qu'elle est en condition de join)
     foreach($joinDatas as $nIndex => $joinData)
     {
@@ -2901,22 +2909,36 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
             $tableRename === ''
                 ?   $joinData['rootTableName']
                 :   $tableRename;
-                
-        $joinDatas[$joinData['constraintName']]['rootTable']['primaryKey'] = (array)explode(',', sqlGetPrimaryKey($db, $joinData['rootTableName']));
-        $joinDatas[$joinData['constraintName']]['rootTable']['joinKey'][$joinData['POSITION_IN_UNIQUE_CONSTRAINT'] - 1] = $joinData['rootJoinKey'];
-        $joinDatas[$joinData['constraintName']]['rootTable']['showKey'] = array_column(sqlGetShowKey($db, $joinData['rootTableName']), 'Name');
-
+        
+        /*if(
+            !isset($returnFilters['Table']) OR 
+            (
+                isset($returnFilters['Table']) AND
+                in_array('rootTable', (array)$returnFilters['Table'])
+            )
+        )*/
         $joinDatas[$joinData['constraintName']]['extraTable']['Name'] = $joinData['extraTableName'];
 
-        $joinDatas[$joinData['constraintName']]['extraTable']['primaryKey'] = (array)explode(',', sqlGetPrimaryKey($db, $joinData['extraTableName']));
-        $joinDatas[$joinData['constraintName']]['extraTable']['joinKey'][$joinData['POSITION_IN_UNIQUE_CONSTRAINT'] - 1] = $joinData['extraJoinKey'];
-        $joinDatas[$joinData['constraintName']]['extraTable']['showKey'] = array_column(sqlGetShowKey($db, $joinData['extraTableName']), 'Name');
-
-        if($swapSides)
+        if($keys)
         {
-            $temp = $joinDatas[$joinData['constraintName']]['extraTable'];
-            $joinDatas[$joinData['constraintName']]['extraTable'] = $joinDatas[$joinData['constraintName']]['rootTable'];
-            $joinDatas[$joinData['constraintName']]['rootTable'] = $temp;
+            $joinDatas[$joinData['constraintName']]['rootTable']['primaryKey'] = (array)explode(',', sqlGetPrimaryKey($db, $joinData['rootTableName']));
+            $joinDatas[$joinData['constraintName']]['rootTable']['joinKey'][$joinData['POSITION_IN_UNIQUE_CONSTRAINT'] - 1] = $joinData['rootJoinKey'];
+            $joinDatas[$joinData['constraintName']]['rootTable']['showKey'] = array_column(sqlGetShowKey($db, $joinData['rootTableName']), 'Name');
+        /*}
+
+        if(
+            !isset($returnFilters['Table']) OR 
+            (
+                isset($returnFilters['Table']) AND
+                in_array('extraTable', (array)$returnFilters['Table'])
+            )
+        )
+        {*/
+            
+
+            $joinDatas[$joinData['constraintName']]['extraTable']['primaryKey'] = (array)explode(',', sqlGetPrimaryKey($db, $joinData['extraTableName']));
+            $joinDatas[$joinData['constraintName']]['extraTable']['joinKey'][$joinData['POSITION_IN_UNIQUE_CONSTRAINT'] - 1] = $joinData['extraJoinKey'];
+            $joinDatas[$joinData['constraintName']]['extraTable']['showKey'] = array_column(sqlGetShowKey($db, $joinData['extraTableName']), 'Name');
         }
 
         //La donnée a prit la forme voulue, on peut détruire son ancienne forme
@@ -2933,6 +2955,9 @@ function sqlGetJoinList($db, $tableName, $full = false, $tableRename = '', $retu
             )
         :   $joinDatas;
         
+    $total = microtime(true) - $start;
+    $sqlGetJoinListTime += $total;
+    //var_dump('<sqlGetJoinList> Time = ' . $sqlGetJoinListTime . ' (+' . $total . '/' . $queryTime . ', ' . ($full ? 'full' : 'not full') . ')');
     return $return;
 }
 
@@ -2955,7 +2980,6 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUr
         $return['selectArray'] = [];
         $return['joinArray'] = [];
         
-        $nIndex = 0;
         foreach($joinTables as $constraintName => $joinTableInfo)
         {
             //Pour chaque interJoin
@@ -2981,6 +3005,15 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUr
             //Comme la recherche de table d'interJointure s'est faite par table référencée, la table root et la table extra ont été inversées.
             //On les échange de place
             swap($joinTableInfo['rootTable'], $joinTableInfo['extraTable']);
+
+            //[shit-flag] Peut être que sa marchera super bien, mais la manière d'avoir l'extraTableRename est bâtarde
+            $extraTableRenames = array_keys(sqlGetJoinList($db, $joinTableInfo['extraTable']['Name'], true, '', [], false, false));
+            if(count($extraTableRenames) != 2)
+                var_dump('<sqlGetInterJoinTools> Error: This array should have a size of 2:', $extraTableRenames);
+                
+            //On en enlève un, c'est forcément l'autre (je sais pas pourquoi c'est l'autre) vu qu'il y en a deux
+            unset($extraTableRenames[array_search($constraintName, $extraTableRenames)]);
+
             $joinTableInfo['rootTable']['Name'] = $workTableName;
             $joinTableInfo['extraTable']['Rename'] = 'tempjoin_' . $constraintName;
             $return['joinArray'][$constraintName] = $joinTableInfo;
@@ -2991,7 +3024,7 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUr
             foreach($joinTableInfo['extraTable']['joinKey'] as $joinColumn)
             {
                 $urlQuery .= 
-                    "&f$nIndex" . "_Table=" . $joinTableInfo['extraTable']['Rename'] .
+                    "&f$nIndex" . "_Table=" . 'tempjoin_' . $extraTableRenames[key($extraTableRenames)] .
                     "&f$nIndex" . "_Key=$joinColumn" .
                     "&f$nIndex" . "_Operator=$operatorString" .
                     "&f$nIndex" . "_Value=$rootJoinValueString";
@@ -2999,11 +3032,81 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUr
                 $nIndex++;
             }
 
+            //Pour rester dans la norme joinArray, la table de join inter s'appellera extraTable, 
+            //et l'extraTable de l'autre côté s'appellera l'interExtraTable
             $return['columnsAttributes'][$selectRename] =
             [
-                //SELECT * FROM rootTable.originTableName WHERE extraTable[Rename].joinKey = rootTable.joinValue
-                'hrefForQuery' => $indexUrl . '?selectedtable=' . $joinTableInfo['rootTable']['originTableName'] . $urlQuery
+                //SELECT * FROM interExtraTable.originTableName WHERE extraTable[Rename].joinKey = rootTable.joinValue
+                'hrefForQuery' => $indexUrl . '?selectedtable=',
+
+                //Doit être concaténé avec celui d'au-dessus (hrefForQuery), ne dois plus exister ensuite
+                'urlQuery' => $urlQuery,
+
+                //Sert à trouver la table à séléctionner pour la requête rapide, ne doit plus exister ensuite
+                'rootTableName' => $joinTableInfo['rootTable']['originTableName'],
+                'interJoinTable' => $joinTableInfo['extraTable']['Name']
             ];
+        }
+        
+        foreach($return['columnsAttributes'] as $selectRename => $attributes)
+        {
+            $interExtraTable = '';
+            if(isset($return['columnsAttributes'][$selectRename]['interJoinTable']))
+            {
+                //L'autre extraTable (si la table d'interJoin est la rootTable)
+                //Les deux extraTables (celle qu'on à en tant que rootTable grace au swap() et celle qu'on cherche)
+                $interExtraTables = 
+                    sqlGetJoinList(
+                        $db, 
+                        $return['columnsAttributes'][$selectRename]['interJoinTable'], 
+                        false, 
+                        '', 
+                        ['Table' => 'extraTable', 'Key' => 'Name'],
+                        false,
+                        false
+                    );
+
+                //[shit-flag]L'interface ne doit afficher que des tables intermediaires contenant au max 2 jointures max, sinon c'est la merde (n dimensions à l'affichage)
+                if(count($interExtraTables) === 2)
+                {
+                    if($interExtraTables[0] === $return['columnsAttributes'][$selectRename]['rootTableName'])
+                        $interExtraTable = $interExtraTables[1];
+                    elseif($interExtraTables[1] === $return['columnsAttributes'][$selectRename]['rootTableName'])
+                        $interExtraTable = $interExtraTables[0];
+                    else 
+                        var_dump(
+                            '<sqlGetInterJoinTools> Error: Neither ' . 
+                            $interExtraTables[0] . ' or ' . $interExtraTables[1] . 'are rootTable: ' . 
+                            $return['columnsAttributes'][$selectRename]['rootTableName']
+                        );
+                    
+                    unset($return['columnsAttributes'][$selectRename]['rootTableName']);
+                }
+                else
+                    var_dump(
+                        '<sqlGetInterJoinTools> Error: ' .
+                        count($interExtraTables) . 
+                        ' found tables connected to ' .
+                        $return['columnsAttributes'][$selectRename]['interJoinTable'] .
+                        ' instead of 2'
+                    );
+                
+                unset($return['columnsAttributes'][$selectRename]['interJoinTable']);
+            }
+            if(isset($return['columnsAttributes'][$selectRename]['urlQuery']))
+            {
+                $return['columnsAttributes'][$selectRename]['hrefForQuery'] .= 
+                    $interExtraTable . 
+                    $return['columnsAttributes'][$selectRename]['urlQuery'];;
+
+                unset($return['columnsAttributes'][$selectRename]['urlQuery']);
+            }
+
+            if(isset($return['columnsAttributes']['rootTableName']))
+                var_dump('<sqlGetInterJoinTools> Error: [rootTableName] remaning in return[columnsAttributes]');
+                
+            if(isset($return['columnsAttributes']['urlQuery']))
+                var_dump('<sqlGetInterJoinTools> Error: [urlQuery] remaning in return[columnsAttributes]');
         }
     }
     else return [];
@@ -3035,13 +3138,7 @@ function sqlGetJoinTools($db, $tableName, $tableRename = '', &$selectArray, &$jo
                 $pivotJoinedShowKey = array_intersect($join['rootTable']['joinKey'], $join['rootTable']['showKey']) AND
                 in_array(
                     $tableName,
-                    array_column(
-                        array_column(
-                            sqlGetJoinList($db, $join['rootTable']['Name']),
-                            'extraTable'
-                        ), 
-                        'Name'
-                    )
+                    sqlGetJoinList($db, $join['rootTable']['Name'], false, '', ['Table' => 'extraTable', 'Key' => 'Name'], false, false)
                 )
             )
                 //Pour chaque jointure sur une showColumn sur une table de pivot où la table courante est une des extraTables
@@ -3824,7 +3921,7 @@ function getRelationnalTable(
         $idString,
         $contentString,
         $operatorString,
-        $rootJoinColumnString;
+        $rootJoinValueString;
     
     //Obtention de la clé primaire de la table
     $tablePrimaryKey = sqlGetPrimaryKey($db, $originTable);
@@ -3915,7 +4012,7 @@ function getRelationnalTable(
         'WHERE' => globalToArray($directQueryGlobal, 'WHERE', $workTable, $execute, $selectArray, $columnsAttributes, $joinArray),
         'GROUP BY' => $primaryColumns,
         'ORDER BY' => globalToArray($directQueryGlobal, 'ORDER BY', $workTable)
-    ], $execute, 'drop', ['SELECT', 'WHERE'], true);
+    ], $execute, 'drop', ['SELECT', 'WHERE'], false);
 
     
     if($returnType === 'htmlDatalist')
@@ -3933,21 +4030,18 @@ function getRelationnalTable(
         $indexUrlWithGets = $indexUrl . rebuildGetString(true);
 
         //Seulement pour la table des utilisateurs (href vers uid)
+        $cellMisc = NULL;
         if($originTable === $usersTableName)
             $cellMisc = 
                 [
                     array_column(sqlGetShowKey($db, $originTable), 'Name')[0] => 
                         "<a href = '$indexUrlWithGets&amp;uid=$idString'>$contentString</a>"
                 ];
-        else
+        elseif(isset($datas[0]))
             foreach(array_keys($datas[0]) as $column)
                 if(inString($column, 'Count of'))
                 {
                     $cellMisc[$column] = "<a target='blank' href = '" . $columnsAttributes[$column]['hrefForQuery'] . "'>$contentString</a>";
-                }
-                else
-                {
-                    $cellMisc = NULL;
                 }
         
         $renames = [];
@@ -3977,7 +4071,7 @@ function getRelationnalTable(
             in_array('DELETE', $userGrants["$dbName.$originTable"]['tableswide permissions'][$originTable])
         );
                     
-        $joinTables = sqlGetJoinList($db, $originTable);
+        $joinTables = sqlGetJoinList($db, $originTable, false, 'extraTable', 'Name', false, false);
         $lists = [];
         foreach($joinTables as $constraintName => $join)
             $lists[$constraintName] = $join['extraTable']['Name'];
@@ -4023,7 +4117,7 @@ function htmlTable(
         $idString,   //Chaîne de charactères remplacée par la clé primaire d'une donnée 'string'
         $contentString, // Chaîne de charactères remplacée par le contenu lui même dans une cellule
         $operatorString,    //Chaîne de charactères remplacée par l'opérateur conditionnel pour requête 'Count of'
-        $rootJoinColumnString;  //Chaîne de charactères remplacée par une des colonnes de jointures côté root
+        $rootJoinValueString;  //Chaîne de charactères remplacée par une des colonnes de jointures côté root
     
     //var_dump($joinArray, $selectArray);
     
@@ -4065,7 +4159,6 @@ function htmlTable(
 
     //Création du contenu html
     $html = "<table $tableElementsEdition[table]>";
-
     foreach($datas as $index => $tuple)
     {
         //Pour chaque ligne
@@ -4180,39 +4273,46 @@ function htmlTable(
                 $cellMisc_temp[$column] = str_replace($idString, $primaryValue, $cellMisc_temp[$column]);
             }
 
-            //Insertion de l'opérateur et des valeurs de jointure côté root si colonne count of (interJoin)
-            var_dump($column);
-            foreach($joinArray as $nIndex => $join)
+            //[INTERJOIN]Déduction de l'opérateur et des valeurs de jointure côté root si colonne count of (interJoin)
+            if(inString($column, 'Count of'))
             {
-                var_dump($join['rootTable']['joinKey'], $join['extraTable']['Rename']);
-                foreach($join['rootTable']['joinKey'] as $rootJoinColumn)
-                {
-                    if(inString($column, 'Count of') AND $rootJoinColumn === $column)
+                $nIndex = 1;
+                $rootJoinValues = [];
+                $operators = [];
+                foreach($joinArray as $constraintName => $join)
+                    if(!is_numeric($constraintName))
                     {
-                        $rootJoinValue = $tuple[$rootJoinColumn];
-                        $operator =
-                            is_string($rootJoinValue)
-                                ?   'REGEXP'
-                                :   '=';var_dump($column);
+                        //[shit-flag] Avec une telle condition, les joitures simples disparaissent
+                        foreach($join['rootTable']['joinKey'] as $rootJoinColumn)
+                        {
+                            $rootJoinValues[$nIndex] = $tuple[$rootJoinColumn];
+                            $operators[$nIndex] =
+                                is_numeric($rootJoinValues[$nIndex])
+                                    ?   '='
+                                    :   'REGEXP';
+                            
+                            $nIndex++;
+                        }
                     }
-                }
-            }
-            var_dump(isset($cellMisc_temp[$column], $rootJoinValue, $operator), 
-            inString($cellMisc_temp[$column], $operatorString), 
-            inString($cellMisc_temp[$column], $rootJoinColumnString));
 
+                unset($nIndex);
+            }
+            
+            //[INTERJOIN]Insertion de l'opérateur et des valeurs de jointure côté root si colonne count of (interJoin)
             if
             (
-                isset($cellMisc_temp[$column], $rootJoinValue, $operator) AND 
+                isset($cellMisc_temp[$column], $rootJoinValues, $operators) AND 
                 inString($cellMisc_temp[$column], $operatorString) AND 
-                inString($cellMisc_temp[$column], $rootJoinColumnString)
+                inString($cellMisc_temp[$column], $rootJoinValueString)
             )
             {
-                var_dump($columnsAttributes[$column]);
-
-                
-                $cellMisc_temp[$column] = str_replace($operatorString, $operator, $cellMisc_temp[$column]);
-                $cellMisc_temp[$column] = str_replace($rootJoinColumnString, $rootColumnValue, $cellMisc_temp[$column]);
+                foreach($rootJoinValues as $nIndex => $rootJoinValue)
+                {
+                    //Si la colonne représentée doit contenir un lien vers une requête rapide d'interJoin
+                    $cellMisc_temp[$column] = preg_replace("/f$nIndex" . "_Operator=$operatorString/", "f$nIndex" . "_Operator=$operators[$nIndex]", $cellMisc_temp[$column]);
+                    $cellMisc_temp[$column] = preg_replace("/f$nIndex" . "_Value=$rootJoinValueString/", "f$nIndex" . "_Value=$rootJoinValues[$nIndex]", $cellMisc_temp[$column]);
+                }
+                //var_dump($operators, $rootJoinValues);
             }
 
             //Insertion du contenu dans le $cellMisc_temp s'il contient $contentString
@@ -4236,6 +4336,7 @@ function htmlTable(
                     //else var_dump($join);
                 }
             }
+
             //Ajout en attributs HTML de $columnsAttributes
             if(isset($columnsAttributes[$column]))
             {

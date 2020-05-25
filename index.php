@@ -3,6 +3,7 @@ $indexUrl = 'index.php';
 $pathToProperties = '../../../home/tom/properties.ini';
 
 require_once 'modele/functions.php';
+$functionTime = microtime(true) - $startTime;
 
 if($_POST)
 {
@@ -11,13 +12,22 @@ if($_POST)
 //require_once 'controller/32fInterface.php';
 
 //var_dump(ldap_bind(ldap_connect()));
-
 if(sessionCheck($dbLogger, $dbManager) AND !isset($_GET['disconnect']))
 {
     //Utilisateur authentifié
     $pwd = parse_ini_file($pathToProperties)[2];
     $mysqlCreds = sqlGetMysqlUserInfo($dbLogger, $_SESSION[$tokenKey], $pwd);
     $db = sqlConnect($host, $dbName, $mysqlCreds['User'], $pwd/*, 'silent'*/);
+    /*
+        $time = microtime(true);
+        foreach(sqlGetJoinList($db, $_GET['selectedtable'], false, '', [], false, false) as $join)
+            var_dump($join);
+        $f = microtime(true) - $time;
+        var_dump($f);
+        foreach(sqlGetJoinList($db, $_GET['selectedtable'], true, '', [], false, false) as $join)
+            var_dump($join);
+        var_dump(microtime(true) - $f - $time);
+    */
     //var_dump(sqlGetJoinList($db, $_GET['selectedtable'], true, '', [], true));
     //Aquisition des php dont on à besoin pour que tout fonctionne (sauf query.php qui affiche du json pour répondre)
     if($_POST)
