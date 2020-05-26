@@ -11,32 +11,18 @@ if(isset($db, $_POST['table'], $_POST['queryType']) AND sqlIndb($db, $_POST['tab
         $presets = [];
         $executeQuery = true;
         foreach($_POST as $name => $value) 
-            if(preg_match('/^-(\w+)-.-(\w+)-.-(\w+)-.-(\w*)-.-([\w,]*)-.-(\w*)-$/', $name, $matches) AND in_array($matches[3], sqlGetColumnsProperties($db, $table, 'Field')) AND $value)
+            if(preg_match('/^-(\w+)-.-(\w+)-.-(\w+)-.-(\w*)-$/', $name, $matches) AND in_array($matches[3], sqlGetColumnsProperties($db, $table, 'Field')) AND $value)
             {
                 //mactches[3] protégé des injections
                 //$presetDb = securedContentPick(sqlGetDbs($db), $matches[1]);
                 $presetTable = securedContentPick($dbTables, $matches[2]);
                 $presets[$presetTable]['columns'][] = $matches[3];
-                var_dump($_POST, $matches[0], $presetTable);
-                if($matches[4] AND $matches[5] AND $matches[6])
+                //var_dump($_POST, $matches[0], $presetTable);
+                if($matches[4])
                 {
                     $listTable = securedContentPick($dbTables, $matches[4]);
-                    $listPk = 
-                        implode(
-                            ',',
-                            securedContentPickArray(
-                                sqlGetColumnsProperties(
-                                    $db,
-                                    $listTable,
-                                    ['Field']
-                                ),
-                                explode(
-                                    ',',
-                                    $matches[5]
-                                )
-                            )
-                        );
-                    $displayedColumn = securedContentPick(sqlGetColumnsProperties($db, $listTable, ['Field']), $matches[6]);
+                    $listPk = sqlGetPrimaryKey($db, $listTable);
+                    $displayedColumn = sqlGetShowKey($db, $listTable, 'comma');
                     $insertedValue = sqlSelect($db, "SELECT $listPk FROM $listTable WHERE $displayedColumn = ?", $value);
                     
                     if(isset($insertedValue[0]))

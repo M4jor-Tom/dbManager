@@ -610,7 +610,8 @@ function sqlDbManageConfig($db)
             Has_graph TINYINT(1) NOT NULL DEFAULT 0,
             Hidden TINYINT(1) NOT NULL DEFAULT 1,
             Grants_hidden TINYINT(1) NOT NULL DEFAULT 0,
-            Is_full_pivot_join_table TINYINT(1) NOT NULL DEFAULT 0,
+            Side_matters TINYINT(1) NOT NULL DEFAULT 1," .  //Pour les tables d'auto-interJointure
+            "Is_full_pivot_join_table TINYINT(1) NOT NULL DEFAULT 0,
             Is_inter_join_table TINYINT(1) NOT NULL DEFAULT 0
         )ENGINE = INNODB;
         CREATE TABLE IF NOT EXISTS $columnsConfigTableName(
@@ -638,10 +639,15 @@ function sqlDbManageConfig($db)
             $userFirstNameKey VARCHAR(255) NOT NULL DEFAULT '' COMMENT 'showKey',
             $userPasswordKey VARCHAR(255) NOT NULL DEFAULT '',
             $tokenKey VARCHAR(255) NOT NULL DEFAULT ''
-        )ENGINE = INNODB;",
+        )ENGINE = INNODB;"
+        /*CREATE TABLE IF NOT EXISTS $parametersTableName(
+            ID_parameter INTEGER PRIMARY KEY NOT NULL AUTO_INCREMENT,
+            Name VARCHAR(255) NOT NULL DEFAULT '' COMMENT 'showKey'
+        )ENGINE = INNODB;"*/,
         false);
 
     if(isset($_GET['restructure']))
+    {
         if(!sqlGetJoinList($db, $tableConfigTableName, false, '', [], false, false) AND !sqlGetJoinList($db, $columnsConfigTableName, false, '', [], false, false) AND !sqlGetJoinList($db, $pivotDatasTableName, false, '', [], false, false))
         //[shit-flag]Mauvais contrôle d'existance des contraintes
         {
@@ -668,16 +674,17 @@ function sqlDbManageConfig($db)
             );
         }
 
-    sqlQuery($db, "
-        GRANT CREATE USER ON *.* TO 'dbLogger'@localhost;
-        GRANT SELECT, UPDATE, INSERT ON $dbName.$usersTableName TO 'dbLogger'@localhost;
-        GRANT SELECT, UPDATE ON mysql.user TO 'dbLogger'@localhost;
-        GRANT SELECT, INSERT ON $dbName.$usersTableName TO 'dbManager'@localhost;
-        GRANT SELECT ON mysql.* TO 'dbManager'@localhost;
-        GRANT SELECT, UPDATE, INSERT, DELETE, CREATE TEMPORARY TABLES ON $dbName.* TO 'dbManager'@localhost WITH GRANT OPTION;
-        GRANT EXECUTE ON PROCEDURE $dbName.check_table_exists TO 'dbManager'@localhost;",
-        false
-    );
+        sqlQuery($db, "
+            GRANT CREATE USER ON *.* TO 'dbLogger'@localhost;
+            GRANT SELECT, UPDATE, INSERT ON $dbName.$usersTableName TO 'dbLogger'@localhost;
+            GRANT SELECT, UPDATE ON mysql.user TO 'dbLogger'@localhost;
+            GRANT SELECT, INSERT ON $dbName.$usersTableName TO 'dbManager'@localhost;
+            GRANT SELECT ON mysql.* TO 'dbManager'@localhost;
+            GRANT SELECT, UPDATE, INSERT, DELETE, CREATE TEMPORARY TABLES ON $dbName.* TO 'dbManager'@localhost WITH GRANT OPTION;
+            GRANT EXECUTE ON PROCEDURE $dbName.check_table_exists TO 'dbManager'@localhost;",
+            false
+        );
+    }
         
     foreach(
     [
@@ -1067,8 +1074,9 @@ function sessionCheck($dbLogger, $dbManager)
     global $dbName, $usersTableName, $userPrimaryKey, $tokenKey;
     if(isset($_SESSION[$tokenKey]) AND sqlDataExists($dbLogger, $usersTableName, $tokenKey, $_SESSION[$tokenKey]))
     {
-        $userInfo = sqlSelect($dbLogger, "SELECT $userPrimaryKey FROM $usersTableName WHERE $tokenKey = ?", $_SESSION[$tokenKey])[0];
-        sqlCreateAccount($dbLogger, $dbManager, $userInfo[$userPrimaryKey]);
+        foreach(sqlSelect($dbLogger, "SELECT $userPrimaryKey FROM $usersTableName") as $userInfo)
+            sqlCreateAccount($dbLogger, $dbManager, $userInfo[$userPrimaryKey]);
+        
         return 1;
     }
     else
@@ -1443,7 +1451,7 @@ function sqlSelect($db, $query, $execute = NULL, $numericKeys = 'keep', $byPass 
     return $killQuery ? [] : $results;
 }
 
-function sqlInsert($db, $table, $fields = [], $values = [])
+function sqlInsert($db, $table, $fields = [], $values = [], $echo = false)
 {
     $success = 0;
     $abort = false;
@@ -1473,7 +1481,13 @@ function sqlInsert($db, $table, $fields = [], $values = [])
     //Requête
     if(!$abort)
     {
-        $request = $db -> prepare("INSERT INTO $table($str_fields) VALUES($str_qmarks)") or die(var_dump($db -> errorInfo()));
+        $query = "INSERT INTO $table($str_fields) VALUES($str_qmarks)";
+        if($echo)
+        {
+            echo $query;
+            var_dump($values);
+        }
+        $request = $db -> prepare($query) or die(var_dump($db -> errorInfo()));
         $success = $request -> execute($values);
         $request -> closecursor();
     }
@@ -2992,9 +3006,10 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUr
             $selectRename = 'Count of ' . $rename;
 
             //Pour voir le comptage des jointures
-            $return['selectArray'][] =
+            $return['selectArray'][$joinTableInfo['rootTable']['Name'] . '-' . $constraintName] =
             [
                 'Database' => $dbName,
+                'originTable' => $joinTableInfo['rootTable']['Name'],
                 'Table' => 'tempjoin_' . $constraintName,
                 'Name' => $countable,
                 'Rename' => $selectRename,
@@ -3080,6 +3095,7 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUr
                             $return['columnsAttributes'][$selectRename]['rootTableName']
                         );
                     
+                    //La rootTableName est devenue l'interExtraTable, plus besoins de la garder en attributs
                     unset($return['columnsAttributes'][$selectRename]['rootTableName']);
                 }
                 else
@@ -3091,16 +3107,16 @@ function sqlGetInterJoinTools($db, $rootTableName, $workTableName = '', $indexUr
                         ' instead of 2'
                     );
                 
+                //Le nom de l'interJoinTable a été utilisé pour avoir ses joins, plus besoins
                 unset($return['columnsAttributes'][$selectRename]['interJoinTable']);
             }
-            if(isset($return['columnsAttributes'][$selectRename]['urlQuery']))
-            {
-                $return['columnsAttributes'][$selectRename]['hrefForQuery'] .= 
-                    $interExtraTable . 
-                    $return['columnsAttributes'][$selectRename]['urlQuery'];;
 
-                unset($return['columnsAttributes'][$selectRename]['urlQuery']);
-            }
+            $return['columnsAttributes'][$selectRename]['hrefForQuery'] .= 
+                $interExtraTable . 
+                $return['columnsAttributes'][$selectRename]['urlQuery'];
+
+            //L'urlQuery a été ajouté au hrefForQuery, plus besoins de le stocker
+            unset($return['columnsAttributes'][$selectRename]['urlQuery']);
 
             if(isset($return['columnsAttributes']['rootTableName']))
                 var_dump('<sqlGetInterJoinTools> Error: [rootTableName] remaning in return[columnsAttributes]');
@@ -3212,6 +3228,7 @@ function sqlGetJoinTools($db, $tableName, $tableRename = '', &$selectArray, &$jo
 
             if
             (
+                isset($selectArray['Name']) AND 
                 $key = array_search(
                     $alias,
                     array_column_keep_key($selectArray, 'Name')
@@ -3639,6 +3656,18 @@ function sqlGetShowKey($db, $tableName, $returnType = 'selectArray', $tableRenam
             $showKey = $showKey['Name'];
         }
     }
+    elseif($returnType === 'comma')
+    {
+        //Si l'on veut directement la fonction MySQL 'CONCAT()' à insérer dans l'attribut 'Name' de la clause SELECT
+        if($showKeyByComment)
+        {
+            $showKey = implode(',', array_column($showKey, 'Name'));
+        }
+        else
+        {   
+            $showKey = $showKey[0]['Name'];
+        }
+    }
     elseif(!$showKeyByComment AND $returnBlankIfIsDefaultShowKey)
     {
         //Si l'on demande un CONCAT() mais qu'une seule colonne n'est dans la showKey, c'est que l'affichage de cette colonne est déjà prévu autre part
@@ -4050,6 +4079,13 @@ function getRelationnalTable(
             $showKeyArray[$nIndex] = ucwords($showColumn);
         }
         
+        $joinTables = sqlGetJoinList($db, $originTable, false, 'extraTable', 'Name', false);
+        
+        //Les jointures sont faites, les données reçues, il faut maintenant les datalist
+        foreach($joinTables as $constraintName => $join)
+            foreach($join['rootTable']['joinKey'] as $joinColumn)
+                $columnsAttributes[$joinColumn]['list'] = $join['extraTable']['Name'];
+        
         $htmlTable = htmlTable(
             $datas,
             $selectArray,
@@ -4070,14 +4106,9 @@ function getRelationnalTable(
             $pivotPrimaryValues,
             in_array('DELETE', $userGrants["$dbName.$originTable"]['tableswide permissions'][$originTable])
         );
-                    
-        $joinTables = sqlGetJoinList($db, $originTable, false, 'extraTable', 'Name', false, false);
-        $lists = [];
-        foreach($joinTables as $constraintName => $join)
-            $lists[$constraintName] = $join['extraTable']['Name'];
         
         $return = 
-            htmlFilterBox($_GET, array_keys($columnsAttributes), $indexUrl, $selectArray) . 
+            htmlFilterBox($directQueryGlobal, array_keys($columnsAttributes), $indexUrl, $selectArray) . 
             $htmlTable .
             htmlCreateInputs($db, $originTable, $columnsAttributes, $userGrants, $indexUrl . rebuildGetString());
     }
@@ -4282,17 +4313,23 @@ function htmlTable(
                 foreach($joinArray as $constraintName => $join)
                     if(!is_numeric($constraintName))
                     {
-                        //[shit-flag] Avec une telle condition, les joitures simples disparaissent
+                        //[shit-flag] Avec une telle condition, les joitures simples disparaissent CAR elles ont un index numérique
                         foreach($join['rootTable']['joinKey'] as $rootJoinColumn)
-                        {
-                            $rootJoinValues[$nIndex] = $tuple[$rootJoinColumn];
-                            $operators[$nIndex] =
-                                is_numeric($rootJoinValues[$nIndex])
-                                    ?   '='
-                                    :   'REGEXP';
-                            
-                            $nIndex++;
-                        }
+                            if(isset($tuple[$rootJoinColumn]))
+                            {
+                                
+                                $rootJoinValues[$nIndex] = $tuple[$rootJoinColumn];
+                                $operators[$nIndex] =
+                                    is_numeric($rootJoinValues[$nIndex])
+                                        ?   '='
+                                        :   'REGEXP';
+
+                                    $rootJoinValues[$nIndex] = $operators[$nIndex] === 'REGEXP'
+                                        ?   '^' . $rootJoinValues[$nIndex] . '$'
+                                        :   $rootJoinValues[$nIndex];
+                                
+                                $nIndex++;
+                            }
                     }
 
                 unset($nIndex);
@@ -4323,7 +4360,7 @@ function htmlTable(
 
             //Mise en attributs html des attributs sql de chaque donnée
             $additiveAttributes = '';
-
+            
             //Si la colonne est issue d'une jointure, on copie les données de columns attributes vers la clé correspondant à columnAlias
             if(!isset($columnsAttributes[$column]))
             {
@@ -4492,7 +4529,7 @@ function htmlCreateInputs($db, $tableName, $columnsAttributes, $userGrants, $ind
     
     foreach($columnsAttributes as $columnName => $attributes)
         if(!isset($attributes['hrefForQuery'])) 
-        //Cet attribut serait pour les count of, ce qui veut dire qu'il ne possède pas les attributs utilisés ci-dessous
+        //Cet attribut serait pour les count of sans le if, ce qui veut dire qu'il ne possède pas les attributs utilisés ci-dessous
         {
             $class = $required = '';
             if($attributes['edittable'] === $tableName OR !isset($attributes['Database']))
@@ -4521,16 +4558,8 @@ function htmlCreateInputs($db, $tableName, $columnsAttributes, $userGrants, $ind
             $list = isset($attributes['list'])
                 ?   $attributes['list']
                 :   '';
-
-            $listPk = isset($attributes['listPrimaryKey'])
-                ?   $attributes['listPrimaryKey']
-                :   '';
-
-            $displayKey = isset($attributes['displaykey'])
-                ?   $attributes['displaykey']
-                :   '';
                 
-            $columnsInitialisationInputs .= "<input list = '$list' type = 'text' name = '-$attributes[Database]-.-$attributes[edittable]-.-$attributes[editkey]-.-$list-.-$listPk-.-$displayKey-' placeholder = '$columnName' $class$required>";
+            $columnsInitialisationInputs .= "<input list = '$list' type = 'text' name = '-$attributes[Database]-.-$attributes[edittable]-.-$attributes[editkey]-.-$list-' placeholder = '$columnName' $class$required>";
         }
     $columnsInitialisationInputs .= '</div>';
 

@@ -38,28 +38,21 @@ if(
         $sqlInjectionAttempt = 1;
     }
     
-    if(isset($_POST['displaykey'], $_POST['list']) AND $_POST['list'] != 'undefined')
+    if(isset($_POST['list']) AND $_POST['list'] != 'undefined')
     {
         //Si l'on à affaire à une [html:datalist] [sql:join]
         if(sqlIndb($db, $_POST['list']))
         {
             $displayTable = securedContentPick($dbTables, $_POST['list']);
-            if(sqlIntable($db, $displayTable, $_POST['displaykey']))
-            {
-                $displayTableKeys = sqlGetColumnsProperties($db, $displayTable, 'Field');
-                $displayKey = securedContentPick($displayTableKeys, $_POST['displaykey']);
-            }
-            else
-            {
-                $sqlInjectionAttempt = 1;
-            }
+            $displayTableKeys = sqlGetColumnsProperties($db, $displayTable, 'Field');
+            $displayKey = sqlGetShowKey($db, $displayTable, 'comma');
         }
         else
         {
             $sqlInjectionAttempt = 1;
         }
 
-        $listPrimaryKey = (int)isset($_POST['listprimarykey']) ? $_POST['listprimarykey'] : $editKey;
+        $listPrimaryKey = sqlGetPrimaryKey($db, $list);
         
         $editValue = sqlSelect($db, "SELECT $listPrimaryKey FROM $displayTable WHERE $displayKey = ?", $_POST['value'])[0][0];
     }
@@ -70,10 +63,9 @@ if(
     }
 
     $primaryValues = explode(',', $_POST['primaryvalue']);
-
+    //var_dump(!isset($sqlInjectionAttempt), $editTable, $securedPrimaryKey, $primaryValues, $editKey, $editValue);
     if(!isset($sqlInjectionAttempt))
     {
-        //var_dump($db, $editTable, $securedPrimaryKey, $primaryValues, $editKey, $editValue);
         sqlUpdate($db, $editTable, $securedPrimaryKey, $primaryValues, $editKey, $editValue);
         //         db   table       condition_colonnes  condition_valeurs      clé_modif valeur_modif
     }

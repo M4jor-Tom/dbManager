@@ -16,9 +16,10 @@
             <?=isset($hideDisconnect) ? '' : '<ul><li><a href = index.php?disconnect>Se déconnecter ' . ($nextTimeUseDisconnect ? '<- La prochaine fois, pensez à cliquer ici !' : '') . '</a></li></ul>'?>
             <ul>
                 <?=isset($hideTables) ? '' : '<li><a href = index.php?tables>Base de données</a></li>'?>
+                <?=isset($hideParameters) ? '' : '<li><a href = index.php?parameters>Paramètres</a></li>'?>
             </ul>
-            <?=(isset($_GET['code']) AND $_GET['code'] === 'watchphpinfo') ? phpinfo(INFO_MODULES) : '';?>
         </nav>
+        <?=(isset($_GET['code']) AND $_GET['code'] === 'watchphpinfo') ? phpinfo(INFO_MODULES) : '';?>
         <?=isset($contentBody) ? $contentBody : ''?>
         <?php if(isset($_GET['phpinfo'])) phpinfo() ?>
     </body>
